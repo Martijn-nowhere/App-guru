@@ -128,7 +128,10 @@ def cmd_trends(args: argparse.Namespace) -> int:
 # mine
 # ---------------------------------------------------------------------------
 
-def print_pain_report(pain_points: list[PainPoint]) -> None:
+def print_pain_report(
+    pain_points: list[PainPoint],
+    trend_by_category: dict[str, TrendResult] | None = None,
+) -> None:
     if not pain_points:
         print("No pain points extracted.")
         return
@@ -140,15 +143,41 @@ def print_pain_report(pain_points: list[PainPoint]) -> None:
             print(f'     "{snippet}"')
         if len(p.quotes) > 3:
             print(f"     ...and {len(p.quotes) - 3} more quote(s)")
+        if trend_by_category is not None:
+            t = trend_by_category.get(p.category)
+            if t is None or not t.ok:
+                print(f"   Trend: N/A ({t.error if t else 'not checked'})")
+            else:
+                mark = VERDICT_MARK[t.verdict]
+                print(f"   Trend: {mark} ({t.change_pct:+.1f}%)")
         print()
 
+    if trend_by_category is not None:
+        rising = [
+            p for p in pain_points
+            if (t := trend_by_category.get(p.category)) and t.ok and t.verdict == "RISING"
+        ]
+        if rising:
+            print(f"-> {len(rising)} pain point(s) also cleared the trend gate. Those are the strongest bets.")
 
-def write_pain_csv(pain_points: list[PainPoint], path: str) -> None:
+
+def write_pain_csv(
+    pain_points: list[PainPoint],
+    path: str,
+    trend_by_category: dict[str, TrendResult] | None = None,
+) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["category", "pain_point", "quotes"])
+        header = ["category", "pain_point", "quotes"]
+        if trend_by_category is not None:
+            header += ["trend_verdict", "trend_change_pct"]
+        writer.writerow(header)
         for p in pain_points:
-            writer.writerow([p.category, p.description, " | ".join(p.quotes)])
+            row = [p.category, p.description, " | ".join(p.quotes)]
+            if trend_by_category is not None:
+                t = trend_by_category.get(p.category)
+                row += [t.verdict if t and t.ok else "ERROR", t.change_pct if t and t.ok else ""]
+            writer.writerow(row)
 
 
 def cmd_mine(args: argparse.Namespace) -> int:
@@ -190,11 +219,20 @@ def cmd_mine(args: argparse.Namespace) -> int:
     joined = join_threads([t.as_text_block() for t in threads])
     pain_points = extract_pain_points(joined, model=args.model)
 
+    trend_by_category = None
+    if args.check_trends and pain_points:
+        categories = [p.category for p in pain_points]
+        print(f"Checking {len(categories)} pain-point categor{'y' if len(categories) == 1 else 'ies'} against Google Trends...")
+        trend_results = check_ideas(
+            categories, timeframe=args.trends_timeframe, geo=args.trends_geo, pause_seconds=args.trends_pause
+        )
+        trend_by_category = {r.keyword: r for r in trend_results}
+
     print()
-    print_pain_report(pain_points)
+    print_pain_report(pain_points, trend_by_category=trend_by_category)
 
     if args.csv:
-        write_pain_csv(pain_points, args.csv)
+        write_pain_csv(pain_points, args.csv, trend_by_category=trend_by_category)
         print(f"Full report written to {args.csv}")
 
     return 0
@@ -235,6 +273,14 @@ def build_parser() -> argparse.ArgumentParser:
     mine.add_argument("--google-cx", help="Programmable Search Engine ID (or set GOOGLE_SEARCH_CX)")
     mine.add_argument("--model", default="claude-opus-4-8", help="Claude model for pain-point extraction")
     mine.add_argument("--csv", help="write the full report to this CSV path")
+    mine.add_argument(
+        "--check-trends",
+        action="store_true",
+        help="after extraction, check each pain-point category against Google Trends",
+    )
+    mine.add_argument("--trends-geo", default="", help="geo filter for --check-trends (default: worldwide)")
+    mine.add_argument("--trends-timeframe", default="today 12-m", help="timeframe for --check-trends")
+    mine.add_argument("--trends-pause", type=float, default=1.5, help="seconds between Trends requests")
     mine.set_defaults(func=cmd_mine)
 
     return parser

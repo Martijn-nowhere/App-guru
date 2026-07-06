@@ -123,6 +123,9 @@ app-guru mine "co-parenting" \
 
 # write the full quote-backed report to CSV
 app-guru mine "co-parenting" --csv pain_points.csv
+
+# also check each pain-point category against Google Trends
+app-guru mine "co-parenting" --check-trends
 ```
 
 Example output:
@@ -140,6 +143,22 @@ Fetched 8 thread(s). Extracting pain points with claude-opus-4-8...
      "why does everyone act like we HAVE to be friends now"
 
 2. [scheduling conflicts] ...
+```
+
+With `--check-trends`, each pain-point category is also run through the
+same Google Trends check as `app-guru trends`, so you get a combined
+signal -- a real complaint *and* a rising search behavior -- without
+retyping anything:
+
+```
+1. [hostile co-parent communication] Parents feel pressure to...
+     "it's hard to co-parent with your abuser"
+   Trend: UP (+14.0%)
+
+2. [scheduling conflicts] ...
+   Trend: FLAT (+2.0%)
+
+-> 1 pain point(s) also cleared the trend gate. Those are the strongest bets.
 ```
 
 ### Notes on the mining pipeline
