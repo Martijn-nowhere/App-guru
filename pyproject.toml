@@ -1,12 +1,14 @@
 [project]
 name = "app-guru"
 version = "0.1.0"
-description = "Automated first-pass validation for app ideas, starting with Google Trends."
+description = "Automated idea-search assistant: Google Trends validation and Reddit pain-point mining."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "pytrends>=4.9.2",
     "numpy>=1.24",
+    "requests>=2.31",
+    "anthropic>=0.40",
 ]
 
 [project.scripts]

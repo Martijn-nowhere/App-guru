@@ -1,8 +1,9 @@
 # app-guru
 
-Automated first-pass validation for app ideas — the "is anyone actually
-searching for this?" gate you're supposed to run before writing a single
-line of code:
+Automated idea-search assistant. Two stations so far, both mirroring gates
+from the idea-sourcing frameworks this repo is built around:
+
+## `app-guru trends` — is anyone searching for this?
 
 > "Type it into Google search. Is it going up and to the right? If it is,
 > that's a great sign."
@@ -10,16 +11,27 @@ line of code:
 > "Google Trends, plug in your core keyword ... if it's flat or declining,
 > skip it. If it's trending up, then it's worth exploring."
 
-`app-guru` scores a list of candidate problem/idea keywords against Google
-Trends and tells you which ones are RISING, FLAT, or DECLINING, plus any
-related queries that are themselves trending up (adjacent niches you
-didn't think to check).
+Scores a list of candidate problem/idea keywords against Google Trends and
+tells you which ones are RISING, FLAT, or DECLINING, plus any related
+queries that are themselves trending up (adjacent niches you didn't think
+to check).
 
-This is stage one of a bigger pipeline. It doesn't replace the rest of the
-sourcing framework — Product Hunt, MicroAcquire/Flippa comps, Reddit and
-App Store complaints, support-ticket mining — it just automates the
-cheapest, fastest filter so you stop spending time on ideas nobody is
-searching for.
+## `app-guru mine` — what are people actually complaining about?
+
+From the "Gold Mining Framework": instead of the Reddit API, use a
+Google-search query scoped to `reddit.com` (optionally to specific
+subreddits) plus a disjunction of frustration phrases ("I wish it did",
+"why can't it just", "so frustrating") to surface threads where people are
+venting about a problem. Fetch each thread's post + top comments via
+Reddit's public `.json` endpoint (no API credentials needed), then run the
+combined text through Claude to extract categorized, quote-backed pain
+points — the same "extract pain points and refine them, with categories
+and quotes attached" step described in that framework.
+
+Neither station replaces the rest of the sourcing framework — Product
+Hunt, MicroAcquire/Flippa comps, App Store complaints, support-ticket
+mining — they automate the cheapest, fastest filters so you stop spending
+time on ideas nobody is searching for or complaining about.
 
 ## Install
 
@@ -33,20 +45,20 @@ or, for the `app-guru` command:
 pip install -e .
 ```
 
-## Use
+## `trends` usage
 
 ```bash
 # check a few ideas directly
-app-guru "quit vaping" "ai sales rep" "prd maker"
+app-guru trends "quit vaping" "ai sales rep" "prd maker"
 
 # check a whole list (see ideas.example.txt for the format)
-app-guru --file ideas.example.txt
+app-guru trends --file ideas.example.txt
 
 # write the full report out for your monthly log
-app-guru --file ideas.example.txt --csv report.csv
+app-guru trends --file ideas.example.txt --csv report.csv
 
 # restrict to one country, use a longer/shorter trend window
-app-guru --file ideas.example.txt --geo US --timeframe "today 3-m"
+app-guru trends --file ideas.example.txt --geo US --timeframe "today 3-m"
 ```
 
 Example output:
@@ -66,7 +78,7 @@ coding agent                      67.0     -11.0%  DOWN      -
 -> 2 idea(s) cleared the trend gate. Next: run the landing-page test.
 ```
 
-## Notes on the signal
+### Notes on the trends signal
 
 - `INTEREST` is Google's 0-100 relative interest index, averaged over the
   most recent 4 weeks in the window — not absolute search volume.
@@ -84,12 +96,73 @@ coding agent                      67.0     -11.0%  DOWN      -
   landing-page/waitlist test), not a green light to build. It only tells
   you the problem is a live, growing search behavior.
 
+## `mine` usage
+
+Requires two sets of credentials:
+
+1. **Google Programmable Search** (free tier: 100 queries/day) — create a
+   search engine at https://programmablesearchengine.google.com/ configured
+   to search the entire web, plus a Google Cloud API key with the Custom
+   Search API enabled. Set `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_CX`,
+   or pass `--google-api-key` / `--google-cx`.
+2. **`ANTHROPIC_API_KEY`** for the pain-point extraction step (standard
+   Anthropic API key; the SDK reads it from the environment automatically).
+
+```bash
+export GOOGLE_SEARCH_API_KEY=...
+export GOOGLE_SEARCH_CX=...
+export ANTHROPIC_API_KEY=...
+
+# search all of reddit.com for a market
+app-guru mine "co-parenting"
+
+# scope to specific subreddits, pull more threads
+app-guru mine "co-parenting" \
+  --subreddit coparenting --subreddit blendedfamilies \
+  --max-threads 20
+
+# write the full quote-backed report to CSV
+app-guru mine "co-parenting" --csv pain_points.csv
+```
+
+Example output:
+
+```
+Query: (site:reddit.com/r/coparenting) co-parenting ("I wish it did" OR "why can't it just" OR ...)
+Searching for up to 10 Reddit thread(s)...
+Found 8 thread(s). Fetching content...
+Fetched 8 thread(s). Extracting pain points with claude-opus-4-8...
+
+1. [hostile co-parent communication] Parents feel pressure to maintain a
+   friendly relationship with an ex for the kids' sake, even when the ex
+   is abusive or unreasonable.
+     "it's hard to co-parent with your abuser"
+     "why does everyone act like we HAVE to be friends now"
+
+2. [scheduling conflicts] ...
+```
+
+### Notes on the mining pipeline
+
+- The default frustration phrases are tuned for venting/complaint threads;
+  override with `--pain-phrase` (repeatable) if your market talks about
+  problems differently.
+- `--max-threads` pages through Google's 10-results-per-request cap
+  automatically.
+- Read each thread before trusting the extraction — the LLM step merges
+  duplicate complaints and only reports pain points with a supporting
+  quote, but it can't tell you whether a thread is representative or a
+  one-off rant.
+- `--model` defaults to `claude-opus-4-8`; override for a cheaper/faster
+  model if you're running this often.
+
 ## Roadmap
 
 Planned next automated stations, matching the other hunting grounds from
-the sourcing framework:
+the sourcing frameworks:
 
-- [ ] Reddit search (official API — recurring complaint threads by keyword)
+- [x] Google Trends validation
+- [x] Reddit pain-point mining (via Google search + LLM extraction)
 - [ ] Product Hunt top launches (official GraphQL API)
 - [ ] App Store / Play Store critical-review scraping
 - [ ] MicroAcquire / Flippa listing pull (comps under a revenue ceiling)

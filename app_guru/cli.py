@@ -1,28 +1,35 @@
 """
 app-guru: a monthly idea-search assistant.
 
-First automated station: Google Trends validation. Point it at a list of
-candidate "problem" keywords (the kind of phrase someone would actually type
-into Google when they're stuck: "quit vaping", "track macros", "cancel
-subscription reminder") and it tells you which ones are trending up, flat,
-or declining -- the same gate described in the sourcing framework this repo
-is built around:
+Two stations so far:
 
-    "If it's flat or declining, skip it. If it's trending up, then it's
-     worth exploring."
+  trends  Google Trends validation -- is anyone actually searching for this
+          problem? ("If it's flat or declining, skip it. If it's trending
+          up, then it's worth exploring.")
+
+  mine    Reddit pain-point mining -- find real complaint threads about a
+          market via Google search, then have Claude extract categorized,
+          quote-backed pain points from them. Mirrors the "Gold Mining
+          Framework": Google-search-for-Reddit-threads, then an LLM pass
+          to pull out pain points with supporting quotes.
 
 Usage:
-    app-guru "quit vaping" "ai sales rep"
-    app-guru --file ideas.txt
-    app-guru --file ideas.txt --csv report.csv
+    app-guru trends "quit vaping" "ai sales rep"
+    app-guru trends --file ideas.txt
+
+    app-guru mine "co-parenting" --subreddit coparenting --subreddit blendedfamilies
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
 
+from app_guru.extract import PainPoint, extract_pain_points, join_threads
+from app_guru.reddit_fetch import fetch_threads
+from app_guru.search import DEFAULT_PAIN_PHRASES, build_reddit_query, search_reddit_threads_paged
 from app_guru.trends import TrendResult, check_ideas
 
 VERDICT_MARK = {
@@ -33,13 +40,17 @@ VERDICT_MARK = {
 }
 
 
+# ---------------------------------------------------------------------------
+# trends
+# ---------------------------------------------------------------------------
+
 def load_keywords_from_file(path: str) -> list[str]:
     with open(path, encoding="utf-8") as f:
         lines = [line.strip() for line in f]
     return [line for line in lines if line and not line.startswith("#")]
 
 
-def print_report(results: list[TrendResult]) -> None:
+def print_trends_report(results: list[TrendResult]) -> None:
     name_w = max(len(r.keyword) for r in results + [TrendResult(keyword="IDEA", ok=True)])
     header = f"{'IDEA':<{name_w}}  {'INTEREST':>8}  {'12M CHANGE':>10}  {'VERDICT':<8}  RISING RELATED"
     print(header)
@@ -67,7 +78,7 @@ def print_report(results: list[TrendResult]) -> None:
         print(f"-> {len(rising)} idea(s) cleared the trend gate. Next: run the landing-page test.")
 
 
-def write_csv(results: list[TrendResult], path: str) -> None:
+def write_trends_csv(results: list[TrendResult], path: str) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["idea", "current_interest", "change_pct", "verdict", "rising_related", "error"])
@@ -84,34 +95,14 @@ def write_csv(results: list[TrendResult], path: str) -> None:
             )
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="app-guru",
-        description="Check whether candidate app ideas are trending on Google Trends.",
-    )
-    parser.add_argument("keywords", nargs="*", help="idea/problem keywords to check")
-    parser.add_argument("--file", "-f", help="path to a text file of keywords, one per line")
-    parser.add_argument("--geo", default="", help="two-letter country code, e.g. US (default: worldwide)")
-    parser.add_argument(
-        "--timeframe",
-        default="today 12-m",
-        help="pytrends timeframe string (default: 'today 12-m')",
-    )
-    parser.add_argument("--csv", help="write the full report to this CSV path")
-    parser.add_argument(
-        "--pause",
-        type=float,
-        default=1.5,
-        help="seconds to wait between requests, raise this if you hit rate limits (default: 1.5)",
-    )
-    args = parser.parse_args(argv)
-
+def cmd_trends(args: argparse.Namespace) -> int:
     keywords = list(args.keywords)
     if args.file:
         keywords += load_keywords_from_file(args.file)
 
     if not keywords:
-        parser.error("provide keywords as arguments or with --file")
+        print("error: provide keywords as arguments or with --file", file=sys.stderr)
+        return 2
 
     seen = set()
     deduped = []
@@ -124,13 +115,135 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     results = check_ideas(deduped, timeframe=args.timeframe, geo=args.geo, pause_seconds=args.pause)
-    print_report(results)
+    print_trends_report(results)
 
     if args.csv:
-        write_csv(results, args.csv)
+        write_trends_csv(results, args.csv)
         print(f"\nFull report written to {args.csv}")
 
     return 0
+
+
+# ---------------------------------------------------------------------------
+# mine
+# ---------------------------------------------------------------------------
+
+def print_pain_report(pain_points: list[PainPoint]) -> None:
+    if not pain_points:
+        print("No pain points extracted.")
+        return
+
+    for i, p in enumerate(pain_points, start=1):
+        print(f"{i}. [{p.category}] {p.description}")
+        for q in p.quotes[:3]:
+            snippet = q if len(q) <= 140 else q[:137] + "..."
+            print(f'     "{snippet}"')
+        if len(p.quotes) > 3:
+            print(f"     ...and {len(p.quotes) - 3} more quote(s)")
+        print()
+
+
+def write_pain_csv(pain_points: list[PainPoint], path: str) -> None:
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["category", "pain_point", "quotes"])
+        for p in pain_points:
+            writer.writerow([p.category, p.description, " | ".join(p.quotes)])
+
+
+def cmd_mine(args: argparse.Namespace) -> int:
+    google_api_key = args.google_api_key or os.environ.get("GOOGLE_SEARCH_API_KEY")
+    google_cx = args.google_cx or os.environ.get("GOOGLE_SEARCH_CX")
+
+    if not google_api_key or not google_cx:
+        print(
+            "error: Google Programmable Search credentials required.\n"
+            "  Pass --google-api-key/--google-cx, or set GOOGLE_SEARCH_API_KEY / GOOGLE_SEARCH_CX.\n"
+            "  Set one up at https://programmablesearchengine.google.com/ (search the entire web)\n"
+            "  plus a Cloud API key with the Custom Search API enabled.",
+            file=sys.stderr,
+        )
+        return 2
+
+    pain_phrases = args.pain_phrase if args.pain_phrase else DEFAULT_PAIN_PHRASES
+    query = build_reddit_query(args.market, subreddits=args.subreddit or None, pain_phrases=pain_phrases)
+    print(f"Query: {query}")
+
+    print(f"Searching for up to {args.max_threads} Reddit thread(s)...")
+    search_results = search_reddit_threads_paged(query, google_api_key, google_cx, total=args.max_threads)
+    if not search_results:
+        print("No Reddit threads found for this query. Try different subreddits or pain phrases.")
+        return 0
+
+    print(f"Found {len(search_results)} thread(s). Fetching content...")
+    threads, fetch_errors = fetch_threads(
+        [r.url for r in search_results], max_comments=args.max_comments
+    )
+    for url, error in fetch_errors:
+        print(f"  warning: could not fetch {url}: {error}", file=sys.stderr)
+
+    if not threads:
+        print("Could not fetch any thread content.", file=sys.stderr)
+        return 1
+
+    print(f"Fetched {len(threads)} thread(s). Extracting pain points with {args.model}...")
+    joined = join_threads([t.as_text_block() for t in threads])
+    pain_points = extract_pain_points(joined, model=args.model)
+
+    print()
+    print_pain_report(pain_points)
+
+    if args.csv:
+        write_pain_csv(pain_points, args.csv)
+        print(f"Full report written to {args.csv}")
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# argparse wiring
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="app-guru", description="Automated idea-search assistant.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    trends = subparsers.add_parser("trends", help="check candidate ideas against Google Trends")
+    trends.add_argument("keywords", nargs="*", help="idea/problem keywords to check")
+    trends.add_argument("--file", "-f", help="path to a text file of keywords, one per line")
+    trends.add_argument("--geo", default="", help="two-letter country code, e.g. US (default: worldwide)")
+    trends.add_argument("--timeframe", default="today 12-m", help="pytrends timeframe string")
+    trends.add_argument("--csv", help="write the full report to this CSV path")
+    trends.add_argument("--pause", type=float, default=1.5, help="seconds between requests")
+    trends.set_defaults(func=cmd_trends)
+
+    mine = subparsers.add_parser("mine", help="mine Reddit for pain points about a market")
+    mine.add_argument("market", help="the market/problem to search for, e.g. 'co-parenting'")
+    mine.add_argument(
+        "--subreddit",
+        action="append",
+        help="restrict search to this subreddit (repeatable); omit to search all of reddit.com",
+    )
+    mine.add_argument(
+        "--pain-phrase",
+        action="append",
+        help="override the default frustration phrases used in the query (repeatable)",
+    )
+    mine.add_argument("--max-threads", type=int, default=10, help="max Reddit threads to fetch (default: 10)")
+    mine.add_argument("--max-comments", type=int, default=15, help="max comments to pull per thread (default: 15)")
+    mine.add_argument("--google-api-key", help="Google Cloud API key (or set GOOGLE_SEARCH_API_KEY)")
+    mine.add_argument("--google-cx", help="Programmable Search Engine ID (or set GOOGLE_SEARCH_CX)")
+    mine.add_argument("--model", default="claude-opus-4-8", help="Claude model for pain-point extraction")
+    mine.add_argument("--csv", help="write the full report to this CSV path")
+    mine.set_defaults(func=cmd_mine)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
 
 
 if __name__ == "__main__":
