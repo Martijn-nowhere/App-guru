@@ -9,15 +9,22 @@ Two stations so far:
 
   mine    Reddit pain-point mining -- find real complaint threads about a
           market via Google search, then have Claude extract categorized,
-          quote-backed pain points from them. Mirrors the "Gold Mining
-          Framework": Google-search-for-Reddit-threads, then an LLM pass
-          to pull out pain points with supporting quotes.
+          quote-backed, SCORED app suggestions from them (opportunity +
+          buildability), favoring boring single-feature ideas over
+          ambitious ones. Mirrors the "Gold Mining Framework".
+
+Every run of either station appends to a shared, append-only history file
+(app_guru/ledger.py) so results compound across months instead of living
+only in a one-off CSV. `mine` entries never claim validated demand on
+their own -- only `trends` writes a real verdict; `mine` always logs
+verdict=None, because a pain point is a lead to investigate, not proof.
 
 Usage:
     app-guru trends "quit vaping" "ai sales rep"
     app-guru trends --file ideas.txt
 
     app-guru mine "co-parenting" --subreddit coparenting --subreddit blendedfamilies
+    app-guru mine "co-parenting" --check-trends
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ import os
 import sys
 
 from app_guru.extract import PainPoint, extract_pain_points, join_threads
+from app_guru.ledger import LedgerEntry, append_to_ledger
 from app_guru.reddit_fetch import fetch_threads
 from app_guru.search import DEFAULT_PAIN_PHRASES, build_reddit_query, search_reddit_threads_paged
 from app_guru.trends import TrendResult, check_ideas
@@ -95,6 +103,25 @@ def write_trends_csv(results: list[TrendResult], path: str) -> None:
             )
 
 
+def trends_ledger_entries(results: list[TrendResult]) -> list[LedgerEntry]:
+    entries = []
+    for r in results:
+        entries.append(
+            LedgerEntry(
+                station="trends",
+                subject=r.keyword,
+                verdict=r.verdict if r.ok else None,
+                data={
+                    "current_interest": r.current_interest if r.ok else None,
+                    "change_pct": r.change_pct if r.ok else None,
+                    "rising_related": r.rising_related,
+                    "error": r.error,
+                },
+            )
+        )
+    return entries
+
+
 def cmd_trends(args: argparse.Namespace) -> int:
     keywords = list(args.keywords)
     if args.file:
@@ -116,6 +143,7 @@ def cmd_trends(args: argparse.Namespace) -> int:
 
     results = check_ideas(deduped, timeframe=args.timeframe, geo=args.geo, pause_seconds=args.pause)
     print_trends_report(results)
+    append_to_ledger(trends_ledger_entries(results))
 
     if args.csv:
         write_trends_csv(results, args.csv)
@@ -128,6 +156,13 @@ def cmd_trends(args: argparse.Namespace) -> int:
 # mine
 # ---------------------------------------------------------------------------
 
+def rank_pain_points(pain_points: list[PainPoint]) -> list[PainPoint]:
+    """Highest opportunity first; buildability breaks ties. Deliberately no
+    combined formula -- opportunity (is this real) and buildability (is
+    this easy) answer different questions and are shown separately."""
+    return sorted(pain_points, key=lambda p: (-p.opportunity_score, -p.buildability_score))
+
+
 def print_pain_report(
     pain_points: list[PainPoint],
     trend_by_category: dict[str, TrendResult] | None = None,
@@ -136,29 +171,37 @@ def print_pain_report(
         print("No pain points extracted.")
         return
 
-    for i, p in enumerate(pain_points, start=1):
-        print(f"{i}. [{p.category}] {p.description}")
+    ranked = rank_pain_points(pain_points)
+
+    for i, p in enumerate(ranked, start=1):
+        print(f"#{i}  [{p.category}]  Opportunity {p.opportunity_score}/10 * Buildability {p.buildability_score}/10")
+        print(f"    App idea: {p.simplest_fix}")
+        print(f"    Pain: {p.description}")
         for q in p.quotes[:3]:
             snippet = q if len(q) <= 140 else q[:137] + "..."
-            print(f'     "{snippet}"')
+            print(f'      "{snippet}"')
         if len(p.quotes) > 3:
-            print(f"     ...and {len(p.quotes) - 3} more quote(s)")
+            print(f"      ...and {len(p.quotes) - 3} more quote(s)")
         if trend_by_category is not None:
             t = trend_by_category.get(p.category)
             if t is None or not t.ok:
-                print(f"   Trend: N/A ({t.error if t else 'not checked'})")
+                print(f"    Trend: N/A ({t.error if t else 'not checked'})")
             else:
                 mark = VERDICT_MARK[t.verdict]
-                print(f"   Trend: {mark} ({t.change_pct:+.1f}%)")
+                print(f"    Trend: {mark} ({t.change_pct:+.1f}%)")
         print()
 
     if trend_by_category is not None:
         rising = [
-            p for p in pain_points
+            p for p in ranked
             if (t := trend_by_category.get(p.category)) and t.ok and t.verdict == "RISING"
         ]
         if rising:
-            print(f"-> {len(rising)} pain point(s) also cleared the trend gate. Those are the strongest bets.")
+            print(f"-> {len(rising)} suggestion(s) also cleared the trend gate. Those are the strongest bets.")
+    print(
+        "Reminder: opportunity/buildability are the model's read of the evidence, not proof of "
+        "demand. Only a RISING trends verdict (or real landing-page signups) counts as validated."
+    )
 
 
 def write_pain_csv(
@@ -166,18 +209,55 @@ def write_pain_csv(
     path: str,
     trend_by_category: dict[str, TrendResult] | None = None,
 ) -> None:
+    ranked = rank_pain_points(pain_points)
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        header = ["category", "pain_point", "quotes"]
+        header = [
+            "rank", "category", "app_idea", "pain_point", "quotes",
+            "opportunity_score", "buildability_score",
+        ]
         if trend_by_category is not None:
             header += ["trend_verdict", "trend_change_pct"]
         writer.writerow(header)
-        for p in pain_points:
-            row = [p.category, p.description, " | ".join(p.quotes)]
+        for i, p in enumerate(ranked, start=1):
+            row = [
+                i, p.category, p.simplest_fix, p.description, " | ".join(p.quotes),
+                p.opportunity_score, p.buildability_score,
+            ]
             if trend_by_category is not None:
                 t = trend_by_category.get(p.category)
                 row += [t.verdict if t and t.ok else "ERROR", t.change_pct if t and t.ok else ""]
             writer.writerow(row)
+
+
+def pain_point_ledger_entries(
+    pain_points: list[PainPoint],
+    market: str,
+    trend_by_category: dict[str, TrendResult] | None = None,
+) -> list[LedgerEntry]:
+    entries = []
+    for p in pain_points:
+        t = trend_by_category.get(p.category) if trend_by_category else None
+        entries.append(
+            LedgerEntry(
+                station="mine",
+                subject=p.category,
+                verdict=None,  # mine never claims validated demand on its own
+                data={
+                    "market": market,
+                    "pain_point": p.description,
+                    "quotes": p.quotes,
+                    "simplest_fix": p.simplest_fix,
+                    "opportunity_score": p.opportunity_score,
+                    "buildability_score": p.buildability_score,
+                    "trend_check": (
+                        {"verdict": t.verdict if t.ok else "ERROR", "change_pct": t.change_pct if t.ok else None}
+                        if t is not None else None
+                    ),
+                },
+            )
+        )
+    return entries
 
 
 def cmd_mine(args: argparse.Namespace) -> int:
@@ -215,7 +295,7 @@ def cmd_mine(args: argparse.Namespace) -> int:
         print("Could not fetch any thread content.", file=sys.stderr)
         return 1
 
-    print(f"Fetched {len(threads)} thread(s). Extracting pain points with {args.model}...")
+    print(f"Fetched {len(threads)} thread(s). Extracting scored app suggestions with {args.model}...")
     joined = join_threads([t.as_text_block() for t in threads])
     pain_points = extract_pain_points(joined, model=args.model)
 
@@ -230,6 +310,7 @@ def cmd_mine(args: argparse.Namespace) -> int:
 
     print()
     print_pain_report(pain_points, trend_by_category=trend_by_category)
+    append_to_ledger(pain_point_ledger_entries(pain_points, args.market, trend_by_category))
 
     if args.csv:
         write_pain_csv(pain_points, args.csv, trend_by_category=trend_by_category)
@@ -255,7 +336,7 @@ def build_parser() -> argparse.ArgumentParser:
     trends.add_argument("--pause", type=float, default=1.5, help="seconds between requests")
     trends.set_defaults(func=cmd_trends)
 
-    mine = subparsers.add_parser("mine", help="mine Reddit for pain points about a market")
+    mine = subparsers.add_parser("mine", help="mine Reddit for scored app-idea suggestions")
     mine.add_argument("market", help="the market/problem to search for, e.g. 'co-parenting'")
     mine.add_argument(
         "--subreddit",

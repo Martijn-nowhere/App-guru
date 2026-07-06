@@ -1,7 +1,9 @@
 # app-guru
 
 Automated idea-search assistant. Two stations so far, both mirroring gates
-from the idea-sourcing frameworks this repo is built around:
+from the idea-sourcing frameworks this repo is built around, plus a shared
+history file so results compound across months instead of disappearing
+into one-off reports.
 
 ## `app-guru trends` — is anyone searching for this?
 
@@ -16,7 +18,7 @@ tells you which ones are RISING, FLAT, or DECLINING, plus any related
 queries that are themselves trending up (adjacent niches you didn't think
 to check).
 
-## `app-guru mine` — what are people actually complaining about?
+## `app-guru mine` — scored app-idea suggestions from real complaints
 
 From the "Gold Mining Framework": instead of the Reddit API, use a
 Google-search query scoped to `reddit.com` (optionally to specific
@@ -24,14 +26,28 @@ subreddits) plus a disjunction of frustration phrases ("I wish it did",
 "why can't it just", "so frustrating") to surface threads where people are
 venting about a problem. Fetch each thread's post + top comments via
 Reddit's public `.json` endpoint (no API credentials needed), then run the
-combined text through Claude to extract categorized, quote-backed pain
-points — the same "extract pain points and refine them, with categories
-and quotes attached" step described in that framework.
+combined text through Claude to extract **scored app-idea suggestions**:
+a category, the pain point, supporting quotes, the simplest possible
+single-feature fix, an **opportunity score** (how painful/common the
+complaint looks), and a **buildability score** (how simple that fix would
+be to actually build). It deliberately favors boring, narrow,
+single-feature ideas over ambitious ones — per the sourcing videos, the
+apps that print money are usually the simplest ones solving one real
+problem well (a puff counter, a QR reader), not the most impressive.
 
-Neither station replaces the rest of the sourcing framework — Product
-Hunt, MicroAcquire/Flippa comps, App Store complaints, support-ticket
-mining — they automate the cheapest, fastest filters so you stop spending
-time on ideas nobody is searching for or complaining about.
+### On the other "proven tools" from the sourcing videos
+
+Reddit and Google Trends are the two sources here because they're the two
+that are genuinely, reliably automatable for free. The others mentioned in
+the source material aren't (yet), and it's worth being honest about why
+rather than faking coverage:
+
+- **Product Hunt** has an official free GraphQL API — this is the next
+  realistic station to add (see Roadmap).
+- **MicroAcquire, Flippa, TrustMRR, Sensor Tower** have no free public
+  API. They're either paywalled enterprise tools or marketplaces you'd
+  have to scrape — fragile, and often against their terms of service.
+  These stay manual steps for now.
 
 ## Install
 
@@ -124,41 +140,36 @@ app-guru mine "co-parenting" \
 # write the full quote-backed report to CSV
 app-guru mine "co-parenting" --csv pain_points.csv
 
-# also check each pain-point category against Google Trends
+# also check each suggestion's category against Google Trends
 app-guru mine "co-parenting" --check-trends
 ```
 
-Example output:
+Example output — ranked by opportunity score, each entry a scored app idea:
 
 ```
 Query: (site:reddit.com/r/coparenting) co-parenting ("I wish it did" OR "why can't it just" OR ...)
 Searching for up to 10 Reddit thread(s)...
 Found 8 thread(s). Fetching content...
-Fetched 8 thread(s). Extracting pain points with claude-opus-4-8...
+Fetched 8 thread(s). Extracting scored app suggestions with claude-opus-4-8...
 
-1. [hostile co-parent communication] Parents feel pressure to maintain a
-   friendly relationship with an ex for the kids' sake, even when the ex
-   is abusive or unreasonable.
-     "it's hard to co-parent with your abuser"
-     "why does everyone act like we HAVE to be friends now"
+#1  [hostile co-parent communication]  Opportunity 8/10 * Buildability 9/10
+    App idea: A one-tap button that turns a rant into a neutral, drama-free message.
+    Pain: Parents feel pressure to maintain a friendly relationship with an
+    ex for the kids' sake, even when the ex is abusive or unreasonable.
+      "it's hard to co-parent with your abuser"
+      "why does everyone act like we HAVE to be friends now"
+    Trend: UP (+14.0%)
 
-2. [scheduling conflicts] ...
-```
+#2  [scheduling conflicts]  Opportunity 6/10 * Buildability 7/10
+    App idea: A shared calendar with one-tap swap requests and a confirmation log.
+    Pain: Parents argue over swap requests via text, nothing tracked.
+      "we always fight about who has them on holidays"
+    Trend: FLAT (+1.0%)
 
-With `--check-trends`, each pain-point category is also run through the
-same Google Trends check as `app-guru trends`, so you get a combined
-signal -- a real complaint *and* a rising search behavior -- without
-retyping anything:
-
-```
-1. [hostile co-parent communication] Parents feel pressure to...
-     "it's hard to co-parent with your abuser"
-   Trend: UP (+14.0%)
-
-2. [scheduling conflicts] ...
-   Trend: FLAT (+2.0%)
-
--> 1 pain point(s) also cleared the trend gate. Those are the strongest bets.
+-> 1 suggestion(s) also cleared the trend gate. Those are the strongest bets.
+Reminder: opportunity/buildability are the model's read of the evidence, not
+proof of demand. Only a RISING trends verdict (or real landing-page signups)
+counts as validated.
 ```
 
 ### Notes on the mining pipeline
@@ -168,23 +179,48 @@ retyping anything:
   problems differently.
 - `--max-threads` pages through Google's 10-results-per-request cap
   automatically.
+- **Opportunity score** (1-10) reflects how painful/common the complaint
+  looks from the evidence alone (quote count, intensity) — it is *not* a
+  claim of validated demand.
+- **Buildability score** (1-10) reflects how simple the suggested fix is:
+  10 = a trivial single-feature app, buildable with no-code AI tools in
+  hours; 1 = needs a complex multi-part product or regulatory hurdles.
 - Read each thread before trusting the extraction — the LLM step merges
   duplicate complaints and only reports pain points with a supporting
   quote, but it can't tell you whether a thread is representative or a
-  one-off rant.
+  one-off rant. A high opportunity score is a lead worth investigating,
+  not proof.
 - `--model` defaults to `claude-opus-4-8`; override for a cheaper/faster
   model if you're running this often.
+
+## The ledger — a shared history across every run
+
+Every run of `trends` or `mine` appends to `data/ledger.jsonl` — an
+append-only, git-committed history of every idea you've ever checked. See
+`data/README.md` for the exact schema and the reasoning behind it. The
+short version:
+
+- Nothing is ever overwritten — every check adds a new entry, so the
+  history is a real audit trail, not a mutable snapshot.
+- `mine` entries always log `verdict: null`. A pain point is a research
+  lead, never a claim of validated demand — only `trends` (real search
+  data) or, eventually, real landing-page signups can say something is
+  actually validated. This is deliberate: it stops an unverified Reddit
+  hunch from quietly being trusted as if it were confirmed demand.
 
 ## Roadmap
 
 Planned next automated stations, matching the other hunting grounds from
-the sourcing frameworks:
+the sourcing frameworks — added the same simple way `trends` and `mine`
+were built, no framework/plugin system:
 
 - [x] Google Trends validation
-- [x] Reddit pain-point mining (via Google search + LLM extraction)
+- [x] Reddit pain-point mining, scored (opportunity + buildability)
+- [x] Shared, append-only ledger across runs
 - [ ] Product Hunt top launches (official GraphQL API)
 - [ ] App Store / Play Store critical-review scraping
-- [ ] MicroAcquire / Flippa listing pull (comps under a revenue ceiling)
+- [ ] MicroAcquire / Flippa / TrustMRR / Sensor Tower — no free API;
+      stays a manual step unless that changes
 
 ## License
 

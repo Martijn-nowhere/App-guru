@@ -29,6 +29,9 @@ def test_extract_pain_points_parses_structured_response():
             "category": "co-parenting with an abuser",
             "pain_point": "Parents feel unsafe negotiating with an abusive ex.",
             "quotes": ["it's hard to co-parent with your abuser"],
+            "simplest_fix": "A one-tap button that generates a neutral, drama-free message.",
+            "opportunity_score": 7,
+            "buildability_score": 9,
         }
     ]
 
@@ -42,6 +45,9 @@ def test_extract_pain_points_parses_structured_response():
     assert len(result) == 1
     assert result[0].category == "co-parenting with an abuser"
     assert result[0].quotes == ["it's hard to co-parent with your abuser"]
+    assert result[0].simplest_fix == "A one-tap button that generates a neutral, drama-free message."
+    assert result[0].opportunity_score == 7
+    assert result[0].buildability_score == 9
 
     call_kwargs = mock_client.messages.create.call_args.kwargs
     assert call_kwargs["model"] == "claude-opus-4-8"
