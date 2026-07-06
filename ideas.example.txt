@@ -1,0 +1,8 @@
+# One candidate idea/problem keyword per line. Lines starting with # are ignored.
+# Write these the way a frustrated user would actually type them into Google.
+quit vaping
+ai sales rep
+coding agent
+prd maker
+cancel subscription reminder
+track macros

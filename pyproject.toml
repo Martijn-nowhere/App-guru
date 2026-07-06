@@ -1,0 +1,20 @@
+[project]
+name = "app-guru"
+version = "0.1.0"
+description = "Automated first-pass validation for app ideas, starting with Google Trends."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pytrends>=4.9.2",
+    "numpy>=1.24",
+]
+
+[project.scripts]
+app-guru = "app_guru.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app_guru*"]
