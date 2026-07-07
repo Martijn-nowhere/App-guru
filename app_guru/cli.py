@@ -1,7 +1,20 @@
 """
 app-guru: a monthly idea-search assistant.
 
-Two stations so far:
+Three stations so far, run in the order the "Gold Mining Framework" video
+actually describes it -- narrow to a market first, validate demand, then
+mine that one market for pain points. It is NOT a market-agnostic "scan
+everything, whatever's trending" tool; the source material is explicit
+that narrowing first is what keeps the mined results specific and
+buildable instead of generic internet noise:
+
+  explore Market idea expansion -- the framework's own step one. Give it
+          one broad area (health / wealth / relationships, or your own),
+          and Claude proposes concrete, narrower candidate niches, which
+          are then trend-checked so you see which ones have real, rising
+          demand -- so you never have to invent a niche name yourself,
+          but the search stays focused. `--auto-mine` chains straight
+          into `mine` on the top RISING candidate.
 
   trends  Google Trends validation -- is anyone actually searching for this
           problem? ("If it's flat or declining, skip it. If it's trending
@@ -12,16 +25,20 @@ Two stations so far:
           built-in web_search tool, then extracts categorized,
           quote-backed, SCORED app suggestions from them (opportunity +
           buildability), favoring boring single-feature ideas over
-          ambitious ones. Mirrors the "Gold Mining Framework". Only needs
-          ANTHROPIC_API_KEY -- no Reddit app or Cloud billing.
+          ambitious ones. Only needs ANTHROPIC_API_KEY -- no Reddit app
+          or Cloud billing.
 
-Every run of either station appends to a shared, append-only history file
+Every run of any station appends to a shared, append-only history file
 (app_guru/ledger.py) so results compound across months instead of living
 only in a one-off CSV. `mine` entries never claim validated demand on
-their own -- only `trends` writes a real verdict; `mine` always logs
-verdict=None, because a pain point is a lead to investigate, not proof.
+their own -- only `trends` and `explore` write a real verdict (both are
+backed by actual Google Trends data); `mine` always logs verdict=None,
+because a pain point is a lead to investigate, not proof.
 
 Usage:
+    app-guru explore
+    app-guru explore "wealth" --auto-mine
+
     app-guru trends "quit vaping" "ai sales rep"
     app-guru trends --file ideas.txt
 
@@ -40,6 +57,7 @@ import anthropic
 
 from app_guru.extract import PainPoint, extract_pain_points
 from app_guru.ledger import LedgerEntry, append_to_ledger
+from app_guru.market_expander import CORE_MARKETS, NicheCandidate, expand_market
 from app_guru.trends import TrendResult, check_ideas
 from app_guru.web_research import DEFAULT_PAIN_PHRASES, research_market
 
@@ -264,7 +282,20 @@ def pain_point_ledger_entries(
     return entries
 
 
-def cmd_mine(args: argparse.Namespace) -> int:
+def run_mine(
+    market: str,
+    subreddits: list[str] | None = None,
+    pain_phrases: list[str] | None = None,
+    max_searches: int = 5,
+    model: str = "claude-opus-4-8",
+    check_trends: bool = False,
+    trends_timeframe: str = "today 12-m",
+    trends_geo: str = "",
+    trends_pause: float = 1.5,
+    csv_path: str | None = None,
+) -> int:
+    """The actual `mine` pipeline, factored out of cmd_mine so `explore
+    --auto-mine` can chain straight into it without going through argparse."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print(
             "error: ANTHROPIC_API_KEY required.\n"
@@ -274,16 +305,16 @@ def cmd_mine(args: argparse.Namespace) -> int:
         )
         return 2
 
-    pain_phrases = args.pain_phrase if args.pain_phrase else DEFAULT_PAIN_PHRASES
+    pain_phrases = pain_phrases if pain_phrases else DEFAULT_PAIN_PHRASES
 
-    print(f"Searching the web for real complaints about '{args.market}' (up to {args.max_searches} searches)...")
+    print(f"Searching the web for real complaints about '{market}' (up to {max_searches} searches)...")
     try:
         research = research_market(
-            args.market,
-            subreddits=args.subreddit or None,
+            market,
+            subreddits=subreddits,
             pain_phrases=pain_phrases,
-            model=args.model,
-            max_searches=args.max_searches,
+            model=model,
+            max_searches=max_searches,
         )
     except anthropic.APIError as exc:
         print(f"error: web-search research failed: {exc}", file=sys.stderr)
@@ -296,11 +327,11 @@ def cmd_mine(args: argparse.Namespace) -> int:
     if research.sources:
         print(f"Ran {research.search_count} search(es) across {len(research.sources)} source(s).")
 
-    print(f"Extracting scored app suggestions with {args.model}...")
-    pain_points = extract_pain_points(research.text, model=args.model)
+    print(f"Extracting scored app suggestions with {model}...")
+    pain_points = extract_pain_points(research.text, model=model)
 
     trend_by_term = None
-    if args.check_trends and pain_points:
+    if check_trends and pain_points:
         # Trend-check the model's real-world search terms (e.g. "co parenting
         # app"), not the category labels (e.g. "unreliable notifications")
         # which nobody Googles. Dedupe so shared terms cost one request.
@@ -308,20 +339,177 @@ def cmd_mine(args: argparse.Namespace) -> int:
         print(f"Checking {len(terms)} search term(s) against Google Trends...")
         trend_results = check_ideas(
             terms,
-            timeframe=args.trends_timeframe,
-            geo=args.trends_geo,
-            pause_seconds=args.trends_pause,
+            timeframe=trends_timeframe,
+            geo=trends_geo,
+            pause_seconds=trends_pause,
             fetch_related=False,  # mine's report never shows rising_related; skip the extra request
         )
         trend_by_term = {r.keyword: r for r in trend_results}
 
     print()
     print_pain_report(pain_points, trend_by_term=trend_by_term)
-    append_to_ledger(pain_point_ledger_entries(pain_points, args.market, trend_by_term))
+    append_to_ledger(pain_point_ledger_entries(pain_points, market, trend_by_term))
+
+    if csv_path:
+        write_pain_csv(pain_points, csv_path, trend_by_term=trend_by_term)
+        print(f"Full report written to {csv_path}")
+
+    return 0
+
+
+def cmd_mine(args: argparse.Namespace) -> int:
+    return run_mine(
+        args.market,
+        subreddits=args.subreddit or None,
+        pain_phrases=args.pain_phrase,
+        max_searches=args.max_searches,
+        model=args.model,
+        check_trends=args.check_trends,
+        trends_timeframe=args.trends_timeframe,
+        trends_geo=args.trends_geo,
+        trends_pause=args.trends_pause,
+        csv_path=args.csv,
+    )
+
+
+# ---------------------------------------------------------------------------
+# explore
+# ---------------------------------------------------------------------------
+
+def rank_niches(candidates: list[NicheCandidate], trend_by_name: dict[str, TrendResult]) -> list[NicheCandidate]:
+    """RISING first (highest change first), then FLAT/DECLINING, then
+    anything Trends couldn't score at all -- same ordering as `trends`."""
+    def sort_key(c: NicheCandidate):
+        t = trend_by_name.get(c.name)
+        if t is None or not t.ok:
+            return (2, 0, 0.0)
+        return (0 if t.verdict == "RISING" else 1, 1 if t.verdict == "DECLINING" else 0, -t.change_pct)
+
+    return sorted(candidates, key=sort_key)
+
+
+def print_niche_report(candidates: list[NicheCandidate], trend_by_name: dict[str, TrendResult]) -> None:
+    if not candidates:
+        print("No candidate niches generated.")
+        return
+
+    ranked = rank_niches(candidates, trend_by_name)
+
+    for i, c in enumerate(ranked, start=1):
+        t = trend_by_name.get(c.name)
+        if t is None or not t.ok:
+            trend_str = f"N/A ({t.error if t else 'not checked'})"
+        else:
+            trend_str = f"{VERDICT_MARK[t.verdict]} ({t.change_pct:+.1f}%)"
+        print(f'#{i}  {c.name}  [{c.parent_category}]  {trend_str}')
+        print(f"    {c.rationale}")
+        print()
+
+    rising = [c for c in ranked if (t := trend_by_name.get(c.name)) and t.ok and t.verdict == "RISING"]
+    if rising:
+        print(
+            f'-> {len(rising)} niche(s) cleared the trend gate. Best bet: '
+            f'app-guru mine "{rising[0].name}" --check-trends'
+        )
+
+
+def write_niche_csv(
+    candidates: list[NicheCandidate],
+    path: str,
+    trend_by_name: dict[str, TrendResult],
+) -> None:
+    ranked = rank_niches(candidates, trend_by_name)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["rank", "niche", "parent_category", "rationale", "trend_verdict", "trend_change_pct"])
+        for i, c in enumerate(ranked, start=1):
+            t = trend_by_name.get(c.name)
+            writer.writerow(
+                [
+                    i, c.name, c.parent_category, c.rationale,
+                    t.verdict if t and t.ok else "N/A",
+                    t.change_pct if t and t.ok else "",
+                ]
+            )
+
+
+def niche_ledger_entries(
+    candidates: list[NicheCandidate],
+    trend_by_name: dict[str, TrendResult],
+) -> list[LedgerEntry]:
+    entries = []
+    for c in candidates:
+        t = trend_by_name.get(c.name)
+        entries.append(
+            LedgerEntry(
+                station="explore",
+                subject=c.name,
+                verdict=t.verdict if t and t.ok else None,  # real Trends data, same as `trends`
+                data={
+                    "parent_category": c.parent_category,
+                    "rationale": c.rationale,
+                    "current_interest": t.current_interest if t and t.ok else None,
+                    "change_pct": t.change_pct if t and t.ok else None,
+                    "error": t.error if t and not t.ok else None,
+                },
+            )
+        )
+    return entries
+
+
+def cmd_explore(args: argparse.Namespace) -> int:
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print(
+            "error: ANTHROPIC_API_KEY required.\n"
+            "  Get one at https://console.anthropic.com/settings/keys and set it in\n"
+            "  your .env (ANTHROPIC_API_KEY=...).",
+            file=sys.stderr,
+        )
+        return 2
+
+    categories = [args.category] if args.category else CORE_MARKETS
+    print(f"Expanding {', '.join(categories)} into candidate niches with {args.model}...")
+    try:
+        candidates = expand_market(categories, model=args.model, count_per_category=args.count)
+    except anthropic.APIError as exc:
+        print(f"error: market expansion failed: {exc}", file=sys.stderr)
+        return 1
+
+    if not candidates:
+        print("No candidate niches generated.")
+        return 0
+
+    # categories can overlap (e.g. two broad areas both propose the same
+    # niche) -- dedupe by name, keeping the first rationale seen.
+    deduped: dict[str, NicheCandidate] = {}
+    for c in candidates:
+        deduped.setdefault(c.name, c)
+    candidates = list(deduped.values())
+
+    names = [c.name for c in candidates]
+    print(f"Checking {len(names)} candidate niche(s) against Google Trends...")
+    trend_results = check_ideas(
+        names, timeframe=args.timeframe, geo=args.geo, pause_seconds=args.pause, fetch_related=False
+    )
+    trend_by_name = {r.keyword: r for r in trend_results}
+
+    print()
+    print_niche_report(candidates, trend_by_name)
+    append_to_ledger(niche_ledger_entries(candidates, trend_by_name))
 
     if args.csv:
-        write_pain_csv(pain_points, args.csv, trend_by_term=trend_by_term)
+        write_niche_csv(candidates, args.csv, trend_by_name)
         print(f"Full report written to {args.csv}")
+
+    if args.auto_mine:
+        ranked = rank_niches(candidates, trend_by_name)
+        rising = [c for c in ranked if (t := trend_by_name.get(c.name)) and t.ok and t.verdict == "RISING"]
+        if not rising:
+            print("\nNo niche cleared the trend gate -- skipping --auto-mine. Try a different category.")
+            return 0
+        top = rising[0]
+        print(f'\n--auto-mine: mining the top candidate, "{top.name}"...\n')
+        return run_mine(top.name, model=args.model, check_trends=True, csv_path=args.mine_csv)
 
     return 0
 
@@ -367,6 +555,28 @@ def build_parser() -> argparse.ArgumentParser:
     mine.add_argument("--trends-timeframe", default="today 12-m", help="timeframe for --check-trends")
     mine.add_argument("--trends-pause", type=float, default=1.5, help="seconds between Trends requests")
     mine.set_defaults(func=cmd_mine)
+
+    explore = subparsers.add_parser(
+        "explore", help="expand a broad category into candidate niches, ranked by real trend data"
+    )
+    explore.add_argument(
+        "category",
+        nargs="?",
+        help="broad area to expand, e.g. 'health', 'wealth', 'relationships' (default: expand all three)",
+    )
+    explore.add_argument("--count", type=int, default=8, help="candidate niches to propose per category (default: 8)")
+    explore.add_argument("--model", default="claude-opus-4-8", help="Claude model for expansion (and --auto-mine)")
+    explore.add_argument("--csv", help="write the full niche report to this CSV path")
+    explore.add_argument("--geo", default="", help="two-letter country code, e.g. US (default: worldwide)")
+    explore.add_argument("--timeframe", default="today 12-m", help="pytrends timeframe string")
+    explore.add_argument("--pause", type=float, default=1.5, help="seconds between Trends requests")
+    explore.add_argument(
+        "--auto-mine",
+        action="store_true",
+        help="automatically run `mine --check-trends` on the top RISING niche",
+    )
+    explore.add_argument("--mine-csv", help="if --auto-mine, write mine's report to this CSV path")
+    explore.set_defaults(func=cmd_explore)
 
     return parser
 

@@ -12,6 +12,7 @@ import anthropic
 
 import app_guru.cli as cli
 from app_guru.extract import PainPoint
+from app_guru.market_expander import NicheCandidate
 from app_guru.trends import TrendResult
 from app_guru.web_research import ResearchResult
 
@@ -217,3 +218,136 @@ def test_mine_csv_includes_scores_and_rank(tmp_path):
     # highest opportunity score (scheduling conflicts, 9) should be rank 1
     lines = content.splitlines()
     assert lines[1].startswith("1,scheduling conflicts")
+
+
+def _fake_explore_dependencies():
+    candidates = [
+        NicheCandidate(name="co-parenting", rationale="recurring conflict, real spend", parent_category="relationships"),
+        NicheCandidate(name="blended families", rationale="growing niche, less crowded", parent_category="relationships"),
+    ]
+    trend_results = [
+        TrendResult(keyword="co-parenting", ok=True, current_interest=30.0, change_pct=13.0, verdict="RISING"),
+        TrendResult(keyword="blended families", ok=True, current_interest=10.0, change_pct=1.0, verdict="FLAT"),
+    ]
+    return candidates, trend_results
+
+
+def test_explore_missing_key_returns_2(capsys, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    rc = cli.main(["explore"])
+    assert rc == 2
+    assert "ANTHROPIC_API_KEY required" in capsys.readouterr().err
+
+
+def test_explore_defaults_to_core_markets():
+    candidates, trend_results = _fake_explore_dependencies()
+    with patch.object(cli, "expand_market", return_value=candidates) as mock_expand, \
+         patch.object(cli, "check_ideas", return_value=trend_results):
+        rc = cli.main(["explore"])
+
+    assert rc == 0
+    assert mock_expand.call_args.args[0] == cli.CORE_MARKETS
+
+
+def test_explore_uses_given_category():
+    candidates, trend_results = _fake_explore_dependencies()
+    with patch.object(cli, "expand_market", return_value=candidates) as mock_expand, \
+         patch.object(cli, "check_ideas", return_value=trend_results):
+        rc = cli.main(["explore", "relationships"])
+
+    assert rc == 0
+    assert mock_expand.call_args.args[0] == ["relationships"]
+
+
+def test_explore_api_error_returns_1(capsys):
+    err = anthropic.APIError("boom", request=None, body=None)
+    with patch.object(cli, "expand_market", side_effect=err):
+        rc = cli.main(["explore"])
+    assert rc == 1
+    assert "market expansion failed" in capsys.readouterr().err
+
+
+def test_explore_ranks_rising_first_and_reports_trend(capsys):
+    candidates, trend_results = _fake_explore_dependencies()
+    with patch.object(cli, "expand_market", return_value=candidates), \
+         patch.object(cli, "check_ideas", return_value=trend_results):
+        rc = cli.main(["explore"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out.index("co-parenting") < out.index("blended families")
+    assert "UP (+13.0%)" in out
+    assert "FLAT (+1.0%)" in out
+    assert "cleared the trend gate" in out
+
+
+def test_explore_logs_niches_with_real_verdict(no_real_ledger):
+    candidates, trend_results = _fake_explore_dependencies()
+    with patch.object(cli, "expand_market", return_value=candidates), \
+         patch.object(cli, "check_ideas", return_value=trend_results):
+        rc = cli.main(["explore"])
+
+    assert rc == 0
+    no_real_ledger.assert_called_once()
+    logged = no_real_ledger.call_args.args[0]
+    assert all(e.station == "explore" for e in logged)
+    by_subject = {e.subject: e for e in logged}
+    assert by_subject["co-parenting"].verdict == "RISING"
+    assert by_subject["blended families"].verdict == "FLAT"
+
+
+def test_explore_csv_includes_rank_and_rationale(tmp_path):
+    candidates, trend_results = _fake_explore_dependencies()
+    csv_path = tmp_path / "niches.csv"
+    with patch.object(cli, "expand_market", return_value=candidates), \
+         patch.object(cli, "check_ideas", return_value=trend_results):
+        rc = cli.main(["explore", "--csv", str(csv_path)])
+
+    assert rc == 0
+    content = csv_path.read_text()
+    assert "rationale" in content
+    lines = content.splitlines()
+    assert lines[1].startswith("1,co-parenting")
+
+
+def test_explore_auto_mine_chains_into_top_rising_niche():
+    candidates, trend_results = _fake_explore_dependencies()
+    research = ResearchResult(text="raw complaints", sources=["https://example.com"], search_count=2)
+    pain_points = [
+        PainPoint(
+            category="hostile communication",
+            search_term="co parenting app",
+            description="desc",
+            quotes=["q"],
+            simplest_fix="fix",
+            opportunity_score=7,
+            buildability_score=8,
+        )
+    ]
+
+    with patch.object(cli, "expand_market", return_value=candidates), \
+         patch.object(cli, "check_ideas", return_value=trend_results), \
+         patch.object(cli, "research_market", return_value=research) as mock_research, \
+         patch.object(cli, "extract_pain_points", return_value=pain_points):
+        rc = cli.main(["explore", "--auto-mine"])
+
+    assert rc == 0
+    # auto-mine should target the top RISING candidate, not the FLAT one
+    assert mock_research.call_args.args[0] == "co-parenting"
+
+
+def test_explore_auto_mine_skips_when_nothing_rising(capsys):
+    candidates = [
+        NicheCandidate(name="blended families", rationale="r", parent_category="relationships"),
+    ]
+    trend_results = [
+        TrendResult(keyword="blended families", ok=True, current_interest=10.0, change_pct=1.0, verdict="FLAT"),
+    ]
+    with patch.object(cli, "expand_market", return_value=candidates), \
+         patch.object(cli, "check_ideas", return_value=trend_results), \
+         patch.object(cli, "research_market") as mock_research:
+        rc = cli.main(["explore", "--auto-mine"])
+
+    assert rc == 0
+    mock_research.assert_not_called()
+    assert "skipping --auto-mine" in capsys.readouterr().out

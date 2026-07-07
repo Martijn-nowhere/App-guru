@@ -1,9 +1,31 @@
 # app-guru
 
-Automated idea-search assistant. Two stations so far, both mirroring gates
-from the idea-sourcing frameworks this repo is built around, plus a shared
-history file so results compound across months instead of disappearing
-into one-off reports.
+Automated idea-search assistant. Three stations so far, mirroring the
+actual order the "Gold Mining Framework" describes: **narrow to a market
+first, validate demand, then mine that one market for pain points.** This
+is deliberately *not* a market-agnostic "scan everything, whatever's
+trending" tool — the source material is explicit that narrowing first is
+what keeps results specific and buildable instead of generic internet
+noise (their own walkthrough example narrows all the way from
+"relationship" down to the single niche "co-parenting" before ever
+touching Reddit). A shared history file means results compound across
+months instead of disappearing into one-off reports.
+
+## `app-guru explore` — turn a broad category into candidate niches
+
+> "The idea is to start with what you have some edge [on] or what you are
+> interested in within the three core markets which are health, wealth
+> and relationship... you are already reducing the risk."
+
+This is the framework's own step one, automated: give it one broad area
+(or nothing, to expand all three core markets — health, wealth,
+relationships), and Claude proposes concrete, narrower candidate niches
+within it (mirroring the video's own "market idea expander" — e.g.
+relationships → family relationship → parenting → **co-parenting**, their
+actual walkthrough example). Every candidate niche is then trend-checked
+against real Google Trends data, so you see which ones have genuine rising
+demand — meaning you never have to invent a niche name yourself, but the
+search stays focused instead of drowning in noise.
 
 ## `app-guru trends` — is anyone searching for this?
 
@@ -72,6 +94,67 @@ or, for the `app-guru` command:
 ```bash
 pip install -e .
 ```
+
+## `explore` usage
+
+Needs only `ANTHROPIC_API_KEY` (same key as `mine`).
+
+```bash
+# expand all three core markets (health, wealth, relationships) at once
+app-guru explore
+
+# expand just one broad area into narrower candidate niches
+app-guru explore "relationships"
+
+# propose more candidates per category
+app-guru explore "wealth" --count 15
+
+# write the full ranked list to CSV
+app-guru explore "health" --csv niches.csv
+
+# go all the way: expand, trend-check, then automatically `mine` the
+# top RISING candidate -- no niche name typed by hand at any step
+app-guru explore "relationships" --auto-mine
+```
+
+Example output:
+
+```
+Expanding relationships into candidate niches with claude-opus-4-8...
+Checking 8 candidate niche(s) against Google Trends...
+
+#1  co-parenting  [relationships]  UP (+13.0%)
+    Divorced/separated parents have ongoing coordination friction and
+    already pay for court-recommended apps.
+
+#2  long-distance dating  [relationships]  UP (+7.8%)
+    Growing category with real emotional pain points around connection
+    and scheduling across time zones.
+
+#3  blended families  [relationships]  FLAT (+2.1%)
+    Real, recurring conflict, but a smaller and less-searched niche.
+
+...
+
+-> 2 niche(s) cleared the trend gate. Best bet: app-guru mine "co-parenting" --check-trends
+```
+
+### Notes on explore
+
+- Default (no category given) expands all three of the framework's own
+  "safe" markets — health, wealth, relationships — since people are
+  demonstrably willing to spend money in each.
+- Candidate niches are proposed by an LLM call with no web search involved
+  (matching the video's own "market idea expander," which is pure
+  brainstorming, not a fact lookup) — only the *trend check* that follows
+  is real, external data.
+- `--auto-mine` picks the single highest-growth `RISING` candidate and
+  immediately runs `mine --check-trends` on it. If nothing clears the
+  trend gate, it stops and tells you rather than mining an unvalidated
+  niche.
+- Like `mine --check-trends`, this skips the "rising related queries"
+  request per niche (never displayed here) to keep Google request volume
+  — and 429 risk — down.
 
 ## `trends` usage
 
@@ -231,19 +314,19 @@ counts as validated.
 
 ## The ledger — a shared history across every run
 
-Every run of `trends` or `mine` appends to `data/ledger.jsonl` — an
-append-only, git-committed history of every idea you've ever checked. See
-`data/README.md` for the exact schema and the reasoning behind it. The
+Every run of `explore`, `trends`, or `mine` appends to `data/ledger.jsonl`
+— an append-only, git-committed history of every idea you've ever checked.
+See `data/README.md` for the exact schema and the reasoning behind it. The
 short version:
 
 - Nothing is ever overwritten — every check adds a new entry, so the
   history is a real audit trail, not a mutable snapshot.
 - `mine` entries always log `verdict: null`. A pain point is a research
-  lead, never a claim of validated demand — only `trends` (real search
-  data) or, eventually, real landing-page signups can say something is
-  actually validated. This is deliberate: it stops an unverified
-  web-sourced hunch from quietly being trusted as if it were confirmed
-  demand.
+  lead, never a claim of validated demand — only `trends` and `explore`
+  (both backed by real Google Trends data) or, eventually, real
+  landing-page signups can say something is actually validated. This is
+  deliberate: it stops an unverified web-sourced hunch from quietly being
+  trusted as if it were confirmed demand.
 
 ## Roadmap
 
@@ -251,6 +334,8 @@ Planned next automated stations, matching the other hunting grounds from
 the sourcing frameworks — added the same simple way `trends` and `mine`
 were built, no framework/plugin system:
 
+- [x] Market idea expansion (`explore`) — the framework's own step one,
+      automated, ranked by real Trends data
 - [x] Google Trends validation (no key)
 - [x] Web-search pain-point mining, scored (opportunity + buildability) —
       via Claude's built-in web_search tool (only needs ANTHROPIC_API_KEY)
