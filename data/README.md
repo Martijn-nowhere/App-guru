@@ -3,7 +3,7 @@
 `ledger.jsonl` is app-guru's shared, append-only history of everything
 `trends` and `mine` have ever found. It's created automatically the first
 time you run either command, and is committed to the repo — it's not
-secret (public Reddit quotes, Trends numbers, category labels; no API
+secret (public web quotes, Trends numbers, category labels; no API
 keys or PII), and the whole point of a monthly-cadence tool is that
 results should accumulate across runs instead of disappearing.
 
@@ -22,7 +22,7 @@ Rules (see `app_guru/ledger.py` for the implementation):
 - **`verdict` is only ever a real, objective result.** `trends` writes
   `RISING` / `FLAT` / `DECLINING`, because it's testing something
   measurable (real search demand). `mine` always writes `verdict: null`
-  — a pain point mined from Reddit complaints is a research lead, never a
+  — a pain point mined from web complaints is a research lead, never a
   claim of validated demand on its own. The only things that can ever say
   an idea is validated are a `RISING` trends entry, or (once that station
   exists) real landing-page signups.

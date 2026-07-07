@@ -1,7 +1,7 @@
 [project]
 name = "app-guru"
 version = "0.1.0"
-description = "Automated idea-search assistant: Google Trends validation and Reddit pain-point mining."
+description = "Automated idea-search assistant: Google Trends validation and web-search pain-point mining."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [

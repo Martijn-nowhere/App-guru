@@ -8,11 +8,12 @@ what gets logged assert on the mock's call args directly.
 import pytest
 from unittest.mock import patch
 
+import anthropic
+
 import app_guru.cli as cli
 from app_guru.extract import PainPoint
-from app_guru.reddit_fetch import RedditThread
-from app_guru.reddit_search import SearchResult
 from app_guru.trends import TrendResult
+from app_guru.web_research import ResearchResult
 
 
 @pytest.fixture(autouse=True)
@@ -22,14 +23,10 @@ def no_real_ledger():
 
 
 @pytest.fixture(autouse=True)
-def fake_reddit_creds(monkeypatch):
-    """Provide Reddit creds and stub the client so cmd_mine never makes a
-    real token/API call. Tests that exercise the missing-creds path unset
-    these explicitly."""
-    monkeypatch.setenv("REDDIT_CLIENT_ID", "cid")
-    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "csecret")
-    with patch.object(cli, "RedditClient") as mock_client_cls:
-        yield mock_client_cls
+def fake_api_key(monkeypatch):
+    """Give cmd_mine an API key so it gets past the credential check. Tests
+    that exercise the missing-key path unset it explicitly."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
 
 
 def test_trends_subcommand(no_real_ledger):
@@ -49,15 +46,10 @@ def test_trends_subcommand(no_real_ledger):
 
 
 def _fake_mine_dependencies():
-    search_results = [
-        SearchResult(title="t1", url="https://www.reddit.com/r/coparenting/comments/1/x/", snippet="s"),
-    ]
-    thread = RedditThread(
-        url=search_results[0].url,
-        subreddit="coparenting",
-        title="t1",
-        post_body="body",
-        top_comments=["it's hard to co-parent with your abuser"],
+    research = ResearchResult(
+        text="Raw complaints compiled from the web...",
+        sources=["https://www.reddit.com/r/coparenting/comments/1/x/"],
+        search_count=3,
     )
     pain_points = [
         PainPoint(
@@ -77,62 +69,53 @@ def _fake_mine_dependencies():
             buildability_score=6,
         ),
     ]
-    return search_results, thread, pain_points
+    return research, pain_points
 
 
-def test_mine_missing_creds_returns_2(capsys, monkeypatch):
-    monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
-    monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
+def test_mine_missing_key_returns_2(capsys, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     rc = cli.main(["mine", "co-parenting"])
     assert rc == 2
     err = capsys.readouterr().err
-    assert "Reddit API credentials required" in err
+    assert "ANTHROPIC_API_KEY required" in err
 
 
-def test_mine_auth_error_returns_2(capsys, fake_reddit_creds):
-    from app_guru.reddit_api import RedditAuthError
-    fake_reddit_creds.side_effect = RedditAuthError("bad client id/secret (401)")
-    rc = cli.main(["mine", "co-parenting"])
-    assert rc == 2
-    err = capsys.readouterr().err
-    assert "401" in err
+def test_mine_api_error_returns_1(capsys):
+    err = anthropic.APIError("boom", request=None, body=None)
+    with patch.object(cli, "research_market", side_effect=err):
+        rc = cli.main(["mine", "co-parenting"])
+    assert rc == 1
+    assert "research failed" in capsys.readouterr().err
 
 
 def test_mine_no_results_exits_cleanly():
-    with patch.object(cli, "search_reddit_threads", return_value=[]), \
+    empty = ResearchResult(text="", sources=[], search_count=1)
+    with patch.object(cli, "research_market", return_value=empty), \
          patch.object(cli, "extract_pain_points") as mock_extract:
         rc = cli.main(["mine", "co-parenting"])
     assert rc == 0
     mock_extract.assert_not_called()
 
 
-def test_mine_search_error_returns_1(capsys):
-    with patch.object(cli, "search_reddit_threads", side_effect=RuntimeError("429 Too Many Requests")):
-        rc = cli.main(["mine", "co-parenting"])
-    assert rc == 1
-    err = capsys.readouterr().err
-    assert "429" in err
-
-
 def test_mine_subcommand_without_check_trends():
-    search_results, thread, pain_points = _fake_mine_dependencies()
+    research, pain_points = _fake_mine_dependencies()
 
-    with patch.object(cli, "search_reddit_threads", return_value=search_results), \
-         patch.object(cli, "fetch_threads", return_value=([thread], [])), \
+    with patch.object(cli, "research_market", return_value=research), \
          patch.object(cli, "extract_pain_points", return_value=pain_points) as mock_extract, \
          patch.object(cli, "check_ideas") as mock_check:
         rc = cli.main(["mine", "co-parenting"])
 
     assert rc == 0
     mock_extract.assert_called_once()
+    # the compiled research text is what gets extracted
+    assert mock_extract.call_args.args[0] == research.text
     mock_check.assert_not_called()
 
 
-def test_mine_passes_subreddits_and_phrases_to_search():
-    search_results, thread, pain_points = _fake_mine_dependencies()
+def test_mine_passes_subreddits_and_phrases_to_research():
+    research, pain_points = _fake_mine_dependencies()
 
-    with patch.object(cli, "search_reddit_threads", return_value=search_results) as mock_search, \
-         patch.object(cli, "fetch_threads", return_value=([thread], [])), \
+    with patch.object(cli, "research_market", return_value=research) as mock_research, \
          patch.object(cli, "extract_pain_points", return_value=pain_points), \
          patch.object(cli, "check_ideas"):
         rc = cli.main(
@@ -140,17 +123,15 @@ def test_mine_passes_subreddits_and_phrases_to_search():
         )
 
     assert rc == 0
-    # search_reddit_threads(client, market, ...) -- client is args[0], market args[1]
-    kwargs = mock_search.call_args.kwargs
-    assert mock_search.call_args.args[1] == "co-parenting"
-    assert kwargs["subreddits"] == ["coparenting", "blendedfamilies"]
+    # research_market(market, ...) -- market is args[0]
+    assert mock_research.call_args.args[0] == "co-parenting"
+    assert mock_research.call_args.kwargs["subreddits"] == ["coparenting", "blendedfamilies"]
 
 
 def test_mine_ranks_by_opportunity_score(capsys):
-    search_results, thread, pain_points = _fake_mine_dependencies()
+    research, pain_points = _fake_mine_dependencies()
 
-    with patch.object(cli, "search_reddit_threads", return_value=search_results), \
-         patch.object(cli, "fetch_threads", return_value=([thread], [])), \
+    with patch.object(cli, "research_market", return_value=research), \
          patch.object(cli, "extract_pain_points", return_value=pain_points), \
          patch.object(cli, "check_ideas"):
         rc = cli.main(["mine", "co-parenting"])
@@ -170,10 +151,9 @@ def test_mine_ranks_by_opportunity_score(capsys):
 
 
 def test_mine_logs_pain_points_with_null_verdict(no_real_ledger):
-    search_results, thread, pain_points = _fake_mine_dependencies()
+    research, pain_points = _fake_mine_dependencies()
 
-    with patch.object(cli, "search_reddit_threads", return_value=search_results), \
-         patch.object(cli, "fetch_threads", return_value=([thread], [])), \
+    with patch.object(cli, "research_market", return_value=research), \
          patch.object(cli, "extract_pain_points", return_value=pain_points), \
          patch.object(cli, "check_ideas"):
         rc = cli.main(["mine", "co-parenting"])
@@ -188,14 +168,13 @@ def test_mine_logs_pain_points_with_null_verdict(no_real_ledger):
 
 
 def test_mine_subcommand_with_check_trends(capsys):
-    search_results, thread, pain_points = _fake_mine_dependencies()
+    research, pain_points = _fake_mine_dependencies()
     trend_results = [
         TrendResult(keyword="hostile co-parent communication", ok=True, current_interest=20.0, change_pct=14.0, verdict="RISING"),
         TrendResult(keyword="scheduling conflicts", ok=True, current_interest=10.0, change_pct=1.0, verdict="FLAT"),
     ]
 
-    with patch.object(cli, "search_reddit_threads", return_value=search_results), \
-         patch.object(cli, "fetch_threads", return_value=([thread], [])), \
+    with patch.object(cli, "research_market", return_value=research), \
          patch.object(cli, "extract_pain_points", return_value=pain_points), \
          patch.object(cli, "check_ideas", return_value=trend_results) as mock_check:
         rc = cli.main(["mine", "co-parenting", "--check-trends"])
@@ -212,15 +191,14 @@ def test_mine_subcommand_with_check_trends(capsys):
 
 
 def test_mine_csv_includes_scores_and_rank(tmp_path):
-    search_results, thread, pain_points = _fake_mine_dependencies()
+    research, pain_points = _fake_mine_dependencies()
     trend_results = [
         TrendResult(keyword="hostile co-parent communication", ok=True, current_interest=20.0, change_pct=14.0, verdict="RISING"),
         TrendResult(keyword="scheduling conflicts", ok=True, current_interest=10.0, change_pct=1.0, verdict="FLAT"),
     ]
     csv_path = tmp_path / "report.csv"
 
-    with patch.object(cli, "search_reddit_threads", return_value=search_results), \
-         patch.object(cli, "fetch_threads", return_value=([thread], [])), \
+    with patch.object(cli, "research_market", return_value=research), \
          patch.object(cli, "extract_pain_points", return_value=pain_points), \
          patch.object(cli, "check_ideas", return_value=trend_results):
         rc = cli.main(["mine", "co-parenting", "--check-trends", "--csv", str(csv_path)])
