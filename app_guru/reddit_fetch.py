@@ -1,23 +1,19 @@
 """
-Fetch a single Reddit thread's post + top comments via Reddit's public,
-unauthenticated JSON endpoint (append ".json" to any thread URL). No
-Reddit API app/OAuth credentials needed for read access, but Reddit does
-require a real-looking User-Agent or it will 429/403 generic clients.
+Fetch a single Reddit thread's post + top comments via Reddit's official
+API (oauth.reddit.com), using the authenticated client from reddit_api.py.
+
+Reddit blocks the old unauthenticated www.reddit.com/*.json endpoints, so
+we hit the same thread listing through the authenticated API instead: GET
+oauth.reddit.com<permalink> returns the [post, comments] pair.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
-import requests
+from app_guru.reddit_api import RedditClient
 
-# Reddit blocks (403) automated-looking User-Agents on its public .json;
-# a browser-like UA gets served. Kept in sync with reddit_search.py.
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
 REMOVED_BODIES = {"[deleted]", "[removed]", ""}
 
 
@@ -38,27 +34,14 @@ class RedditThread:
         return "\n".join(lines)
 
 
-def _json_url(thread_url: str) -> str:
-    parts = urlsplit(thread_url)
-    path = parts.path.rstrip("/")
-    if not path.endswith(".json"):
-        path += ".json"
-    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+def _thread_path(thread_url: str) -> str:
+    """The API path for a thread is just its permalink path (no domain,
+    no trailing '.json')."""
+    return urlsplit(thread_url).path.rstrip("/")
 
 
-def fetch_thread(
-    thread_url: str,
-    max_comments: int = 15,
-    user_agent: str = DEFAULT_USER_AGENT,
-    timeout: float = 15,
-) -> RedditThread:
-    resp = requests.get(
-        _json_url(thread_url),
-        headers={"User-Agent": user_agent, "Accept": "application/json"},
-        timeout=timeout,
-    )
-    resp.raise_for_status()
-    payload = resp.json()
+def fetch_thread(client: RedditClient, thread_url: str, max_comments: int = 15) -> RedditThread:
+    payload = client.get_json(_thread_path(thread_url))
 
     if not isinstance(payload, list) or len(payload) < 2:
         raise ValueError(f"unexpected response shape for {thread_url}")
@@ -88,9 +71,9 @@ def fetch_thread(
 
 
 def fetch_threads(
+    client: RedditClient,
     thread_urls: list[str],
     max_comments: int = 15,
-    user_agent: str = DEFAULT_USER_AGENT,
 ) -> tuple[list[RedditThread], list[tuple[str, str]]]:
     """Fetch several threads, collecting (url, error) pairs for failures
     instead of aborting the whole batch on one bad thread."""
@@ -98,7 +81,7 @@ def fetch_threads(
     errors: list[tuple[str, str]] = []
     for url in thread_urls:
         try:
-            threads.append(fetch_thread(url, max_comments=max_comments, user_agent=user_agent))
+            threads.append(fetch_thread(client, url, max_comments=max_comments))
         except Exception as exc:
             errors.append((url, str(exc)))
     return threads, errors

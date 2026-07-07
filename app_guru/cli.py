@@ -8,7 +8,7 @@ Two stations so far:
           up, then it's worth exploring.")
 
   mine    Reddit pain-point mining -- find real complaint threads about a
-          market via Reddit's own free search (no API key needed), then
+          market via Reddit's official API (a free "script" app), then
           have Claude extract categorized, quote-backed, SCORED app
           suggestions from them (opportunity + buildability), favoring
           boring single-feature ideas over ambitious ones. Mirrors the
@@ -32,10 +32,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
 
 from app_guru.extract import PainPoint, extract_pain_points, join_threads
 from app_guru.ledger import LedgerEntry, append_to_ledger
+from app_guru.reddit_api import DEFAULT_USER_AGENT, RedditAuthError, RedditClient
 from app_guru.reddit_fetch import fetch_threads
 from app_guru.reddit_search import DEFAULT_PAIN_PHRASES, search_reddit_threads
 from app_guru.trends import TrendResult, check_ideas
@@ -261,11 +263,32 @@ def pain_point_ledger_entries(
 
 
 def cmd_mine(args: argparse.Namespace) -> int:
+    client_id = args.reddit_client_id or os.environ.get("REDDIT_CLIENT_ID")
+    client_secret = args.reddit_client_secret or os.environ.get("REDDIT_CLIENT_SECRET")
+
+    if not client_id or not client_secret:
+        print(
+            "error: Reddit API credentials required.\n"
+            "  Create a free 'script' app at https://www.reddit.com/prefs/apps and set\n"
+            "  REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET (or pass --reddit-client-id /\n"
+            "  --reddit-client-secret).",
+            file=sys.stderr,
+        )
+        return 2
+
+    user_agent = os.environ.get("REDDIT_USER_AGENT", DEFAULT_USER_AGENT)
+    try:
+        client = RedditClient(client_id, client_secret, user_agent=user_agent)
+    except RedditAuthError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
     pain_phrases = args.pain_phrase if args.pain_phrase else DEFAULT_PAIN_PHRASES
 
     print(f"Searching Reddit for up to {args.max_threads} thread(s)...")
     try:
         search_results = search_reddit_threads(
+            client,
             args.market,
             subreddits=args.subreddit or None,
             pain_phrases=pain_phrases,
@@ -273,7 +296,7 @@ def cmd_mine(args: argparse.Namespace) -> int:
         )
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        print("  Reddit rate-limits anonymous requests; wait a moment and try again.", file=sys.stderr)
+        print("  Reddit rate-limits requests; wait a moment and try again.", file=sys.stderr)
         return 1
 
     if not search_results:
@@ -282,7 +305,7 @@ def cmd_mine(args: argparse.Namespace) -> int:
 
     print(f"Found {len(search_results)} thread(s). Fetching content...")
     threads, fetch_errors = fetch_threads(
-        [r.url for r in search_results], max_comments=args.max_comments
+        client, [r.url for r in search_results], max_comments=args.max_comments
     )
     for url, error in fetch_errors:
         print(f"  warning: could not fetch {url}: {error}", file=sys.stderr)
@@ -346,6 +369,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mine.add_argument("--max-threads", type=int, default=10, help="max Reddit threads to fetch (default: 10)")
     mine.add_argument("--max-comments", type=int, default=15, help="max comments to pull per thread (default: 15)")
+    mine.add_argument("--reddit-client-id", help="Reddit script-app client ID (or set REDDIT_CLIENT_ID)")
+    mine.add_argument("--reddit-client-secret", help="Reddit script-app secret (or set REDDIT_CLIENT_SECRET)")
     mine.add_argument("--model", default="claude-opus-4-8", help="Claude model for pain-point extraction")
     mine.add_argument("--csv", help="write the full report to this CSV path")
     mine.add_argument(

@@ -22,12 +22,11 @@ to check).
 
 From the "Gold Mining Framework": search Reddit for threads where people
 are venting about a problem, then have Claude turn those complaints into
-scored app ideas. It uses **Reddit's own free search** (`reddit.com/
-search.json`, optionally per-subreddit) with a disjunction of frustration
-phrases ("I wish it did", "why can't it just", "so frustrating") to bias
-toward complaint threads — no Google, no API key, no billing, nothing to
-set up. It fetches each thread's post + top comments via Reddit's public
-`.json` endpoint, then runs the combined text through Claude to extract
+scored app ideas. It uses **Reddit's official API** (via a free "script"
+app), searching site-wide or per-subreddit with a disjunction of
+frustration phrases ("I wish it did", "why can't it just", "so
+frustrating") to bias toward complaint threads. It fetches each thread's
+post + top comments, then runs the combined text through Claude to extract
 **scored app-idea suggestions**: a category, the pain point, supporting
 quotes, the simplest possible single-feature fix, an **opportunity score**
 (how painful/common the complaint looks), and a **buildability score**
@@ -37,8 +36,14 @@ sourcing videos, the apps that print money are usually the simplest ones
 solving one real problem well (a puff counter, a QR reader), not the most
 impressive.
 
-The only thing `mine` needs is your `ANTHROPIC_API_KEY` (for the Claude
-extraction step). `trends` needs nothing at all.
+`mine` needs two free things: your `ANTHROPIC_API_KEY` (Claude extraction)
+and a Reddit API client ID + secret (a 2-minute "script" app — no billing,
+no approval). `trends` needs nothing at all.
+
+> **Why the Reddit API and not just scraping?** Reddit now blocks
+> unauthenticated access to its public `.json` endpoints (returns 403), so
+> anonymous scraping no longer works. The official API — free, sanctioned,
+> reliable — is the way in. Setup is genuinely quick (see below).
 
 ### On the other "proven tools" from the sourcing videos
 
@@ -119,23 +124,33 @@ coding agent                      67.0     -11.0%  DOWN      -
 
 ## `mine` usage
 
-The only credential `mine` needs is your **`ANTHROPIC_API_KEY`** (for the
-Claude extraction step). No Google, no search-engine setup, no billing —
-the search runs against Reddit's own free endpoint.
+`mine` needs three values, all free:
 
-Easiest way to set the key: copy `.env.example` to `.env`, paste your
-Anthropic key in, and `app-guru` loads it automatically every run.
-`.env` is gitignored, so your key is never committed.
+1. **`ANTHROPIC_API_KEY`** — for the Claude extraction step
+   (https://console.anthropic.com/settings/keys).
+2. **`REDDIT_CLIENT_ID`** and **`REDDIT_CLIENT_SECRET`** — from a Reddit
+   "script" app. Go to https://www.reddit.com/prefs/apps → scroll down →
+   "create another app…" → pick **script**, give it any name, set the
+   redirect URI to `http://localhost:8080` (unused, but required) →
+   create. The short string shown **under the app name** is your client
+   ID; the **secret** field is your client secret. No billing, no
+   approval, ~2 minutes.
+
+Easiest way to set all three: copy `.env.example` to `.env`, paste them in,
+and `app-guru` loads them automatically every run. `.env` is gitignored,
+so nothing is ever committed.
 
 ```bash
 cp .env.example .env
-# then edit .env and paste your ANTHROPIC_API_KEY in
+# then edit .env and paste in your three values
 ```
 
-Or set it as an environment variable:
+Or set them as environment variables:
 
 ```bash
 export ANTHROPIC_API_KEY=...
+export REDDIT_CLIENT_ID=...
+export REDDIT_CLIENT_SECRET=...
 ```
 
 Then run:
@@ -189,9 +204,10 @@ counts as validated.
 - The default frustration phrases are tuned for venting/complaint threads;
   override with `--pain-phrase` (repeatable) if your market talks about
   problems differently.
-- Search runs against Reddit's own public `search.json` endpoint — no API
-  key. Reddit rate-limits anonymous requests, so if you get a rate-limit
-  error, just wait a moment and re-run.
+- Search and thread-fetch go through Reddit's official API
+  (`oauth.reddit.com`) using an app-only token from your script app.
+  Reddit rate-limits the API too, so if you hit a limit, wait a moment and
+  re-run.
 - **Opportunity score** (1-10) reflects how painful/common the complaint
   looks from the evidence alone (quote count, intensity) — it is *not* a
   claim of validated demand.
@@ -229,7 +245,7 @@ were built, no framework/plugin system:
 
 - [x] Google Trends validation (no key)
 - [x] Reddit pain-point mining, scored (opportunity + buildability) — via
-      Reddit's own free search, no key
+      Reddit's official API (free script app)
 - [x] Shared, append-only ledger across runs
 - [ ] Product Hunt top launches (official GraphQL API)
 - [ ] App Store / Play Store critical-review scraping
