@@ -128,11 +128,26 @@ Requires two sets of credentials:
 2. **`ANTHROPIC_API_KEY`** for the pain-point extraction step (standard
    Anthropic API key; the SDK reads it from the environment automatically).
 
+The easiest way to set all three: copy `.env.example` to `.env`, fill in
+your keys, and `app-guru` loads them automatically every run (no
+`export` needed). `.env` is gitignored, so your keys are never committed.
+
+```bash
+cp .env.example .env
+# then edit .env and paste your three keys in
+```
+
+Or set them as environment variables the old way:
+
 ```bash
 export GOOGLE_SEARCH_API_KEY=...
 export GOOGLE_SEARCH_CX=...
 export ANTHROPIC_API_KEY=...
+```
 
+Then run:
+
+```bash
 # search all of reddit.com for a market
 app-guru mine "co-parenting"
 

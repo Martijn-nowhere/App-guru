@@ -368,7 +368,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def load_env() -> None:
+    """Load a .env file (ANTHROPIC_API_KEY, GOOGLE_SEARCH_API_KEY,
+    GOOGLE_SEARCH_CX) if one is present, so keys don't have to be exported
+    by hand every session. Real environment variables always win over the
+    .env file. No-op if python-dotenv isn't installed."""
+    try:
+        from dotenv import find_dotenv, load_dotenv
+    except ImportError:
+        return
+    # usecwd=True so we find a .env in the directory the user runs from
+    # (and its parents), not next to this package file.
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+
+
 def main(argv: list[str] | None = None) -> int:
+    load_env()
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)

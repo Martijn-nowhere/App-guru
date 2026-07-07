@@ -2,3 +2,4 @@ pytrends>=4.9.2
 numpy>=1.24
 requests>=2.31
 anthropic>=0.40
+python-dotenv>=1.0
