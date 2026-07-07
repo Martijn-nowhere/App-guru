@@ -8,10 +8,11 @@ Two stations so far:
           up, then it's worth exploring.")
 
   mine    Reddit pain-point mining -- find real complaint threads about a
-          market via Google search, then have Claude extract categorized,
-          quote-backed, SCORED app suggestions from them (opportunity +
-          buildability), favoring boring single-feature ideas over
-          ambitious ones. Mirrors the "Gold Mining Framework".
+          market via Reddit's own free search (no API key needed), then
+          have Claude extract categorized, quote-backed, SCORED app
+          suggestions from them (opportunity + buildability), favoring
+          boring single-feature ideas over ambitious ones. Mirrors the
+          "Gold Mining Framework".
 
 Every run of either station appends to a shared, append-only history file
 (app_guru/ledger.py) so results compound across months instead of living
@@ -31,13 +32,12 @@ from __future__ import annotations
 
 import argparse
 import csv
-import os
 import sys
 
 from app_guru.extract import PainPoint, extract_pain_points, join_threads
 from app_guru.ledger import LedgerEntry, append_to_ledger
 from app_guru.reddit_fetch import fetch_threads
-from app_guru.search import DEFAULT_PAIN_PHRASES, build_reddit_query, search_reddit_threads_paged
+from app_guru.reddit_search import DEFAULT_PAIN_PHRASES, search_reddit_threads
 from app_guru.trends import TrendResult, check_ideas
 
 VERDICT_MARK = {
@@ -261,26 +261,21 @@ def pain_point_ledger_entries(
 
 
 def cmd_mine(args: argparse.Namespace) -> int:
-    google_api_key = args.google_api_key or os.environ.get("GOOGLE_SEARCH_API_KEY")
-    google_cx = args.google_cx or os.environ.get("GOOGLE_SEARCH_CX")
-
-    if not google_api_key or not google_cx:
-        print(
-            "error: Google Programmable Search credentials required.\n"
-            "  Pass --google-api-key/--google-cx, or set GOOGLE_SEARCH_API_KEY / GOOGLE_SEARCH_CX.\n"
-            "  Create an engine at https://programmablesearchengine.google.com/ with reddit.com\n"
-            "  as the site to search (mine only searches Reddit), then add a Google Cloud API key\n"
-            "  with the Custom Search API enabled.",
-            file=sys.stderr,
-        )
-        return 2
-
     pain_phrases = args.pain_phrase if args.pain_phrase else DEFAULT_PAIN_PHRASES
-    query = build_reddit_query(args.market, subreddits=args.subreddit or None, pain_phrases=pain_phrases)
-    print(f"Query: {query}")
 
-    print(f"Searching for up to {args.max_threads} Reddit thread(s)...")
-    search_results = search_reddit_threads_paged(query, google_api_key, google_cx, total=args.max_threads)
+    print(f"Searching Reddit for up to {args.max_threads} thread(s)...")
+    try:
+        search_results = search_reddit_threads(
+            args.market,
+            subreddits=args.subreddit or None,
+            pain_phrases=pain_phrases,
+            total=args.max_threads,
+        )
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print("  Reddit rate-limits anonymous requests; wait a moment and try again.", file=sys.stderr)
+        return 1
+
     if not search_results:
         print("No Reddit threads found for this query. Try different subreddits or pain phrases.")
         return 0
@@ -351,8 +346,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mine.add_argument("--max-threads", type=int, default=10, help="max Reddit threads to fetch (default: 10)")
     mine.add_argument("--max-comments", type=int, default=15, help="max comments to pull per thread (default: 15)")
-    mine.add_argument("--google-api-key", help="Google Cloud API key (or set GOOGLE_SEARCH_API_KEY)")
-    mine.add_argument("--google-cx", help="Programmable Search Engine ID (or set GOOGLE_SEARCH_CX)")
     mine.add_argument("--model", default="claude-opus-4-8", help="Claude model for pain-point extraction")
     mine.add_argument("--csv", help="write the full report to this CSV path")
     mine.add_argument(

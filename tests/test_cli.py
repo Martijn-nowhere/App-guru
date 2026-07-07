@@ -11,7 +11,7 @@ from unittest.mock import patch
 import app_guru.cli as cli
 from app_guru.extract import PainPoint
 from app_guru.reddit_fetch import RedditThread
-from app_guru.search import SearchResult
+from app_guru.reddit_search import SearchResult
 from app_guru.trends import TrendResult
 
 
@@ -35,11 +35,6 @@ def test_trends_subcommand(no_real_ledger):
     assert logged_entries[0].station == "trends"
     assert logged_entries[0].subject == "quit vaping"
     assert logged_entries[0].verdict == "RISING"
-
-
-def test_mine_missing_credentials_errors():
-    rc = cli.main(["mine", "co-parenting", "--google-api-key", "", "--google-cx", ""])
-    assert rc == 2
 
 
 def _fake_mine_dependencies():
@@ -74,28 +69,61 @@ def _fake_mine_dependencies():
     return search_results, thread, pain_points
 
 
+def test_mine_no_results_exits_cleanly():
+    with patch.object(cli, "search_reddit_threads", return_value=[]), \
+         patch.object(cli, "extract_pain_points") as mock_extract:
+        rc = cli.main(["mine", "co-parenting"])
+    assert rc == 0
+    mock_extract.assert_not_called()
+
+
+def test_mine_search_error_returns_1(capsys):
+    with patch.object(cli, "search_reddit_threads", side_effect=RuntimeError("429 Too Many Requests")):
+        rc = cli.main(["mine", "co-parenting"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "429" in err
+
+
 def test_mine_subcommand_without_check_trends():
     search_results, thread, pain_points = _fake_mine_dependencies()
 
-    with patch.object(cli, "search_reddit_threads_paged", return_value=search_results), \
+    with patch.object(cli, "search_reddit_threads", return_value=search_results), \
          patch.object(cli, "fetch_threads", return_value=([thread], [])), \
          patch.object(cli, "extract_pain_points", return_value=pain_points) as mock_extract, \
          patch.object(cli, "check_ideas") as mock_check:
-        rc = cli.main(["mine", "co-parenting", "--google-api-key", "k", "--google-cx", "cx"])
+        rc = cli.main(["mine", "co-parenting"])
 
     assert rc == 0
     mock_extract.assert_called_once()
     mock_check.assert_not_called()
 
 
-def test_mine_ranks_by_opportunity_score(capsys):
+def test_mine_passes_subreddits_and_phrases_to_search():
     search_results, thread, pain_points = _fake_mine_dependencies()
 
-    with patch.object(cli, "search_reddit_threads_paged", return_value=search_results), \
+    with patch.object(cli, "search_reddit_threads", return_value=search_results) as mock_search, \
          patch.object(cli, "fetch_threads", return_value=([thread], [])), \
          patch.object(cli, "extract_pain_points", return_value=pain_points), \
          patch.object(cli, "check_ideas"):
-        rc = cli.main(["mine", "co-parenting", "--google-api-key", "k", "--google-cx", "cx"])
+        rc = cli.main(
+            ["mine", "co-parenting", "--subreddit", "coparenting", "--subreddit", "blendedfamilies"]
+        )
+
+    assert rc == 0
+    kwargs = mock_search.call_args.kwargs
+    assert mock_search.call_args.args[0] == "co-parenting"
+    assert kwargs["subreddits"] == ["coparenting", "blendedfamilies"]
+
+
+def test_mine_ranks_by_opportunity_score(capsys):
+    search_results, thread, pain_points = _fake_mine_dependencies()
+
+    with patch.object(cli, "search_reddit_threads", return_value=search_results), \
+         patch.object(cli, "fetch_threads", return_value=([thread], [])), \
+         patch.object(cli, "extract_pain_points", return_value=pain_points), \
+         patch.object(cli, "check_ideas"):
+        rc = cli.main(["mine", "co-parenting"])
 
     assert rc == 0
     out = capsys.readouterr().out
@@ -114,11 +142,11 @@ def test_mine_ranks_by_opportunity_score(capsys):
 def test_mine_logs_pain_points_with_null_verdict(no_real_ledger):
     search_results, thread, pain_points = _fake_mine_dependencies()
 
-    with patch.object(cli, "search_reddit_threads_paged", return_value=search_results), \
+    with patch.object(cli, "search_reddit_threads", return_value=search_results), \
          patch.object(cli, "fetch_threads", return_value=([thread], [])), \
          patch.object(cli, "extract_pain_points", return_value=pain_points), \
          patch.object(cli, "check_ideas"):
-        rc = cli.main(["mine", "co-parenting", "--google-api-key", "k", "--google-cx", "cx"])
+        rc = cli.main(["mine", "co-parenting"])
 
     assert rc == 0
     no_real_ledger.assert_called_once()
@@ -136,13 +164,11 @@ def test_mine_subcommand_with_check_trends(capsys):
         TrendResult(keyword="scheduling conflicts", ok=True, current_interest=10.0, change_pct=1.0, verdict="FLAT"),
     ]
 
-    with patch.object(cli, "search_reddit_threads_paged", return_value=search_results), \
+    with patch.object(cli, "search_reddit_threads", return_value=search_results), \
          patch.object(cli, "fetch_threads", return_value=([thread], [])), \
          patch.object(cli, "extract_pain_points", return_value=pain_points), \
          patch.object(cli, "check_ideas", return_value=trend_results) as mock_check:
-        rc = cli.main(
-            ["mine", "co-parenting", "--google-api-key", "k", "--google-cx", "cx", "--check-trends"]
-        )
+        rc = cli.main(["mine", "co-parenting", "--check-trends"])
 
     assert rc == 0
     mock_check.assert_called_once()
@@ -163,17 +189,11 @@ def test_mine_csv_includes_scores_and_rank(tmp_path):
     ]
     csv_path = tmp_path / "report.csv"
 
-    with patch.object(cli, "search_reddit_threads_paged", return_value=search_results), \
+    with patch.object(cli, "search_reddit_threads", return_value=search_results), \
          patch.object(cli, "fetch_threads", return_value=([thread], [])), \
          patch.object(cli, "extract_pain_points", return_value=pain_points), \
          patch.object(cli, "check_ideas", return_value=trend_results):
-        rc = cli.main(
-            [
-                "mine", "co-parenting",
-                "--google-api-key", "k", "--google-cx", "cx",
-                "--check-trends", "--csv", str(csv_path),
-            ]
-        )
+        rc = cli.main(["mine", "co-parenting", "--check-trends", "--csv", str(csv_path)])
 
     assert rc == 0
     content = csv_path.read_text()

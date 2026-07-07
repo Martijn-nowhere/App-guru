@@ -20,20 +20,25 @@ to check).
 
 ## `app-guru mine` — scored app-idea suggestions from real complaints
 
-From the "Gold Mining Framework": instead of the Reddit API, use a
-Google-search query scoped to `reddit.com` (optionally to specific
-subreddits) plus a disjunction of frustration phrases ("I wish it did",
-"why can't it just", "so frustrating") to surface threads where people are
-venting about a problem. Fetch each thread's post + top comments via
-Reddit's public `.json` endpoint (no API credentials needed), then run the
-combined text through Claude to extract **scored app-idea suggestions**:
-a category, the pain point, supporting quotes, the simplest possible
-single-feature fix, an **opportunity score** (how painful/common the
-complaint looks), and a **buildability score** (how simple that fix would
-be to actually build). It deliberately favors boring, narrow,
-single-feature ideas over ambitious ones — per the sourcing videos, the
-apps that print money are usually the simplest ones solving one real
-problem well (a puff counter, a QR reader), not the most impressive.
+From the "Gold Mining Framework": search Reddit for threads where people
+are venting about a problem, then have Claude turn those complaints into
+scored app ideas. It uses **Reddit's own free search** (`reddit.com/
+search.json`, optionally per-subreddit) with a disjunction of frustration
+phrases ("I wish it did", "why can't it just", "so frustrating") to bias
+toward complaint threads — no Google, no API key, no billing, nothing to
+set up. It fetches each thread's post + top comments via Reddit's public
+`.json` endpoint, then runs the combined text through Claude to extract
+**scored app-idea suggestions**: a category, the pain point, supporting
+quotes, the simplest possible single-feature fix, an **opportunity score**
+(how painful/common the complaint looks), and a **buildability score**
+(how simple that fix would be to actually build). It deliberately favors
+boring, narrow, single-feature ideas over ambitious ones — per the
+sourcing videos, the apps that print money are usually the simplest ones
+solving one real problem well (a puff counter, a QR reader), not the most
+impressive.
+
+The only thing `mine` needs is your `ANTHROPIC_API_KEY` (for the Claude
+extraction step). `trends` needs nothing at all.
 
 ### On the other "proven tools" from the sourcing videos
 
@@ -114,34 +119,22 @@ coding agent                      67.0     -11.0%  DOWN      -
 
 ## `mine` usage
 
-Requires two sets of credentials:
+The only credential `mine` needs is your **`ANTHROPIC_API_KEY`** (for the
+Claude extraction step). No Google, no search-engine setup, no billing —
+the search runs against Reddit's own free endpoint.
 
-1. **Google Programmable Search** (free tier: 100 queries/day) — create a
-   search engine at https://programmablesearchengine.google.com/ with
-   `reddit.com` as the site to search (`mine` only ever searches Reddit, so
-   a Reddit-scoped engine is exactly right — Google has deprecated the old
-   "search the entire web" option, and it isn't needed here). The engine's
-   "Search engine ID" is your `GOOGLE_SEARCH_CX`. Then add a Google Cloud
-   API key with the Custom Search API enabled — that's your
-   `GOOGLE_SEARCH_API_KEY`. Set both as env vars, or pass
-   `--google-api-key` / `--google-cx`.
-2. **`ANTHROPIC_API_KEY`** for the pain-point extraction step (standard
-   Anthropic API key; the SDK reads it from the environment automatically).
-
-The easiest way to set all three: copy `.env.example` to `.env`, fill in
-your keys, and `app-guru` loads them automatically every run (no
-`export` needed). `.env` is gitignored, so your keys are never committed.
+Easiest way to set the key: copy `.env.example` to `.env`, paste your
+Anthropic key in, and `app-guru` loads it automatically every run.
+`.env` is gitignored, so your key is never committed.
 
 ```bash
 cp .env.example .env
-# then edit .env and paste your three keys in
+# then edit .env and paste your ANTHROPIC_API_KEY in
 ```
 
-Or set them as environment variables the old way:
+Or set it as an environment variable:
 
 ```bash
-export GOOGLE_SEARCH_API_KEY=...
-export GOOGLE_SEARCH_CX=...
 export ANTHROPIC_API_KEY=...
 ```
 
@@ -166,7 +159,7 @@ app-guru mine "co-parenting" --check-trends
 Example output — ranked by opportunity score, each entry a scored app idea:
 
 ```
-Query: (site:reddit.com/r/coparenting) co-parenting ("I wish it did" OR "why can't it just" OR ...)
+Searching Reddit for up to 10 thread(s)...
 Searching for up to 10 Reddit thread(s)...
 Found 8 thread(s). Fetching content...
 Fetched 8 thread(s). Extracting scored app suggestions with claude-opus-4-8...
@@ -196,8 +189,9 @@ counts as validated.
 - The default frustration phrases are tuned for venting/complaint threads;
   override with `--pain-phrase` (repeatable) if your market talks about
   problems differently.
-- `--max-threads` pages through Google's 10-results-per-request cap
-  automatically.
+- Search runs against Reddit's own public `search.json` endpoint — no API
+  key. Reddit rate-limits anonymous requests, so if you get a rate-limit
+  error, just wait a moment and re-run.
 - **Opportunity score** (1-10) reflects how painful/common the complaint
   looks from the evidence alone (quote count, intensity) — it is *not* a
   claim of validated demand.
@@ -233,8 +227,9 @@ Planned next automated stations, matching the other hunting grounds from
 the sourcing frameworks — added the same simple way `trends` and `mine`
 were built, no framework/plugin system:
 
-- [x] Google Trends validation
-- [x] Reddit pain-point mining, scored (opportunity + buildability)
+- [x] Google Trends validation (no key)
+- [x] Reddit pain-point mining, scored (opportunity + buildability) — via
+      Reddit's own free search, no key
 - [x] Shared, append-only ledger across runs
 - [ ] Product Hunt top launches (official GraphQL API)
 - [ ] App Store / Play Store critical-review scraping
