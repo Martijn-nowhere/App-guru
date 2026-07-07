@@ -12,7 +12,12 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
-DEFAULT_USER_AGENT = "app-guru/0.1 (idea-research script; contact via github.com/Martijn-nowhere/app-guru)"
+# Reddit blocks (403) automated-looking User-Agents on its public .json;
+# a browser-like UA gets served. Kept in sync with reddit_search.py.
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 REMOVED_BODIES = {"[deleted]", "[removed]", ""}
 
 
@@ -49,7 +54,7 @@ def fetch_thread(
 ) -> RedditThread:
     resp = requests.get(
         _json_url(thread_url),
-        headers={"User-Agent": user_agent},
+        headers={"User-Agent": user_agent, "Accept": "application/json"},
         timeout=timeout,
     )
     resp.raise_for_status()

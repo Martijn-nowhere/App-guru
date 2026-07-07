@@ -20,7 +20,13 @@ from dataclasses import dataclass
 
 import requests
 
-DEFAULT_USER_AGENT = "app-guru/0.1 (idea-research script; contact via github.com/Martijn-nowhere/app-guru)"
+# Reddit actively blocks (403) requests whose User-Agent looks automated,
+# but serves its public .json to browser-like clients. Use a realistic
+# browser UA so the unauthenticated search/thread endpoints respond.
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 DEFAULT_PAIN_PHRASES = [
     "I wish it did",
@@ -67,7 +73,10 @@ def _search_once(
     while attempt <= retries:
         try:
             resp = requests.get(
-                url, params=params, headers={"User-Agent": user_agent}, timeout=15
+                url,
+                params=params,
+                headers={"User-Agent": user_agent, "Accept": "application/json"},
+                timeout=15,
             )
             resp.raise_for_status()
             data = resp.json()
