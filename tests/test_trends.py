@@ -5,10 +5,12 @@ sandbox has Google Trends blocked at the egress-policy level, so the only
 way to validate the scoring math here is against synthetic series.
 """
 
+from unittest.mock import patch
+
 import pandas as pd
 import pytest
 
-from app_guru.trends import TrendResult, _slope_change_pct, _verdict_for, check_idea
+from app_guru.trends import TrendResult, _slope_change_pct, _verdict_for, check_idea, check_ideas
 
 
 class FakePytrends:
@@ -102,3 +104,32 @@ def test_check_idea_handles_exception():
     result = check_idea("rate limited idea", BoomPytrends())
     assert not result.ok
     assert "429" in result.error
+
+
+def test_check_ideas_uses_long_backoff_for_429(monkeypatch):
+    class AlwaysRateLimited:
+        def build_payload(self, *a, **k):
+            raise RuntimeError("429 Too Many Requests")
+
+    with patch("app_guru.trends.TrendReq", return_value=AlwaysRateLimited()), \
+         patch("app_guru.trends.time.sleep") as mock_sleep:
+        check_ideas(["quit vaping"], retries=2, pause_seconds=1.5)
+
+    # two retries after the initial attempt: 20s, then 40s -- not the short
+    # 1.5s-scaled backoff used for ordinary (non-429) failures.
+    sleep_calls = [c.args[0] for c in mock_sleep.call_args_list]
+    assert 20.0 in sleep_calls
+    assert 40.0 in sleep_calls
+
+
+def test_check_ideas_uses_short_backoff_for_non_429(monkeypatch):
+    class AlwaysBroken:
+        def build_payload(self, *a, **k):
+            raise RuntimeError("malformed response")
+
+    with patch("app_guru.trends.TrendReq", return_value=AlwaysBroken()), \
+         patch("app_guru.trends.time.sleep") as mock_sleep:
+        check_ideas(["quit vaping"], retries=2, pause_seconds=1.5)
+
+    sleep_calls = [c.args[0] for c in mock_sleep.call_args_list]
+    assert all(s < 10 for s in sleep_calls)

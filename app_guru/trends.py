@@ -115,6 +115,10 @@ def check_idea(
         return TrendResult(keyword=keyword, ok=False, error=str(exc))
 
 
+def _is_rate_limit_error(result: TrendResult) -> bool:
+    return result.error is not None and "429" in result.error
+
+
 def check_ideas(
     keywords: list[str],
     timeframe: str = "today 12-m",
@@ -125,7 +129,10 @@ def check_ideas(
     """
     Score a batch of keywords, one request at a time, with a pause between
     calls and a couple of retries on failure. Google Trends' unofficial
-    endpoint rate-limits aggressively when hit back-to-back.
+    endpoint rate-limits aggressively when hit back-to-back -- a plain 429
+    gets a much longer exponential backoff (starting at 20s) than an
+    ordinary transient failure, since Google's soft-bans don't clear in a
+    couple of seconds.
     """
     pytrends = TrendReq(hl="en-US", tz=0)
     results: list[TrendResult] = []
@@ -139,7 +146,10 @@ def check_ideas(
                 break
             attempt += 1
             if attempt <= retries:
-                time.sleep(pause_seconds * (attempt + 1))
+                if _is_rate_limit_error(result):
+                    time.sleep(20.0 * (2 ** (attempt - 1)))
+                else:
+                    time.sleep(pause_seconds * (attempt + 1))
         results.append(result)
 
         if i < len(keywords) - 1:

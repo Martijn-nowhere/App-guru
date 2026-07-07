@@ -118,8 +118,10 @@ coding agent                      67.0     -11.0%  DOWN      -
   if that's too strict or too loose for your niche.
 - Google Trends' public endpoint is unofficial and rate-limits
   aggressively. `app-guru` pauses between requests and retries a couple of
-  times; if you're still getting errors, raise `--pause` or run a smaller
-  batch.
+  times; on a genuine 429 it backs off much longer (20s, then 40s) since a
+  Google soft-ban doesn't clear in a couple of seconds. If you're still
+  seeing `N/A (... 429 ...)`, wait a minute or two before re-running --
+  it's Google's endpoint cooling down, not something to configure around.
 - A `RISING` verdict here is a green light to move to the next gate (the
   landing-page/waitlist test), not a green light to build. It only tells
   you the problem is a live, growing search behavior.
