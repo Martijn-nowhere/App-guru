@@ -307,7 +307,11 @@ def cmd_mine(args: argparse.Namespace) -> int:
         terms = list(dict.fromkeys(p.search_term for p in pain_points if p.search_term))
         print(f"Checking {len(terms)} search term(s) against Google Trends...")
         trend_results = check_ideas(
-            terms, timeframe=args.trends_timeframe, geo=args.trends_geo, pause_seconds=args.trends_pause
+            terms,
+            timeframe=args.trends_timeframe,
+            geo=args.trends_geo,
+            pause_seconds=args.trends_pause,
+            fetch_related=False,  # mine's report never shows rising_related; skip the extra request
         )
         trend_by_term = {r.keyword: r for r in trend_results}
 

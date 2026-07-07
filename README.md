@@ -222,6 +222,12 @@ counts as validated.
   not proof.
 - `--model` defaults to `claude-opus-4-8`; override for a cheaper/faster
   model if you're running this often.
+- `--check-trends` here skips the "rising related queries" request that the
+  `trends` command makes (it's never shown in `mine`'s report) — halving
+  the Google requests per run to reduce 429 risk. Even so, Google's
+  unofficial endpoint can still soft-ban a run with many search terms; a
+  handful of `N/A (... 429 ...)` results in one run is expected, not a bug
+  — the ones that do come back are still real data.
 
 ## The ledger — a shared history across every run
 

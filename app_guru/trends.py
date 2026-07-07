@@ -72,8 +72,15 @@ def check_idea(
     pytrends: TrendReq,
     timeframe: str = "today 12-m",
     geo: str = "",
+    fetch_related: bool = True,
 ) -> TrendResult:
-    """Fetch and score a single keyword. One network round-trip."""
+    """
+    Fetch and score a single keyword. One network round-trip, or two if
+    fetch_related (a second Google request for "rising related" queries,
+    only used by the `trends` command's report -- callers that never
+    display it, like `mine --check-trends`, should pass False to halve
+    their Google request count and rate-limit exposure.
+    """
     try:
         pytrends.build_payload([keyword], timeframe=timeframe, geo=geo)
         df = pytrends.interest_over_time()
@@ -95,13 +102,14 @@ def check_idea(
         change_pct = _slope_change_pct(series)
 
         rising_related: list[str] = []
-        try:
-            related = pytrends.related_queries()
-            rising_df = related.get(keyword, {}).get("rising")
-            if rising_df is not None and not rising_df.empty:
-                rising_related = rising_df["query"].head(5).tolist()
-        except Exception:
-            pass  # related queries are a bonus signal, never fatal
+        if fetch_related:
+            try:
+                related = pytrends.related_queries()
+                rising_df = related.get(keyword, {}).get("rising")
+                if rising_df is not None and not rising_df.empty:
+                    rising_related = rising_df["query"].head(5).tolist()
+            except Exception:
+                pass  # related queries are a bonus signal, never fatal
 
         return TrendResult(
             keyword=keyword,
@@ -125,6 +133,7 @@ def check_ideas(
     geo: str = "",
     pause_seconds: float = 1.5,
     retries: int = 2,
+    fetch_related: bool = True,
 ) -> list[TrendResult]:
     """
     Score a batch of keywords, one request at a time, with a pause between
@@ -132,7 +141,9 @@ def check_ideas(
     endpoint rate-limits aggressively when hit back-to-back -- a plain 429
     gets a much longer exponential backoff (starting at 20s) than an
     ordinary transient failure, since Google's soft-bans don't clear in a
-    couple of seconds.
+    couple of seconds. Pass fetch_related=False to skip the second
+    "rising related queries" request per keyword when the caller never
+    displays it (halves Google request volume, and so rate-limit risk).
     """
     pytrends = TrendReq(hl="en-US", tz=0)
     results: list[TrendResult] = []
@@ -141,7 +152,7 @@ def check_ideas(
         attempt = 0
         result = None
         while attempt <= retries:
-            result = check_idea(keyword, pytrends, timeframe=timeframe, geo=geo)
+            result = check_idea(keyword, pytrends, timeframe=timeframe, geo=geo, fetch_related=fetch_related)
             if result.ok:
                 break
             attempt += 1

@@ -186,6 +186,8 @@ def test_mine_subcommand_with_check_trends(capsys):
     # trend-checks the real search terms, not the category labels
     called_terms = mock_check.call_args.args[0]
     assert set(called_terms) == {"co parenting app", "custody calendar app"}
+    # never displayed by mine's report, so skip the extra related-queries request
+    assert mock_check.call_args.kwargs["fetch_related"] is False
 
     out = capsys.readouterr().out
     assert 'Trend for "co parenting app": UP (+14.0%)' in out

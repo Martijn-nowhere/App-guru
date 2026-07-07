@@ -17,6 +17,7 @@ class FakePytrends:
     def __init__(self, series):
         self._series = series
         self.built = None
+        self.related_queries_calls = 0
 
     def build_payload(self, keywords, timeframe=None, geo=None):
         self.built = (keywords, timeframe, geo)
@@ -26,6 +27,7 @@ class FakePytrends:
         return pd.DataFrame({keyword: self._series})
 
     def related_queries(self):
+        self.related_queries_calls += 1
         keyword = self.built[0][0]
         rising = pd.DataFrame({"query": ["adjacent idea one", "adjacent idea two"], "value": [500, 200]})
         return {keyword: {"top": None, "rising": rising}}
@@ -81,6 +83,17 @@ def test_check_idea_keeps_late_riser_with_enough_coverage():
     result = check_idea("co parenting app", FakePytrends(series))
     assert result.ok
     assert result.verdict == "RISING"
+
+
+def test_check_idea_skips_related_queries_when_not_needed():
+    series = [5, 5, 6, 5, 20, 22, 21, 23]
+    fake = FakePytrends(series)
+
+    result = check_idea("custody calendar app", fake, fetch_related=False)
+
+    assert result.ok
+    assert result.rising_related == []
+    assert fake.related_queries_calls == 0
 
 
 def test_check_idea_handles_empty_dataframe():
