@@ -400,7 +400,10 @@ def print_niche_report(candidates: list[NicheCandidate], trend_by_name: dict[str
         if t is None or not t.ok:
             trend_str = f"N/A ({t.error if t else 'not checked'})"
         else:
-            trend_str = f"{VERDICT_MARK[t.verdict]} ({t.change_pct:+.1f}%)"
+            # show absolute interest alongside the % change -- a big swing
+            # off a tiny base (e.g. interest 2 -> 30) is easy to mistake for
+            # a real breakout otherwise.
+            trend_str = f"{VERDICT_MARK[t.verdict]} ({t.change_pct:+.1f}%, interest {t.current_interest:.1f}/100)"
         print(f'#{i}  {c.name}  [{c.parent_category}]  {trend_str}')
         print(f"    {c.rationale}")
         print()

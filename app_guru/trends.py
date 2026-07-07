@@ -28,6 +28,13 @@ DECLINING_THRESHOLD = -8.0  # % growth below this is DECLINING
 # fills most of the window; only genuine noise stays this sparse.
 MIN_COVERAGE = 0.5
 
+# The % change is a ratio against the *first half's* mean interest. When that
+# baseline is only 1-2 (on Google's 0-100 relative-interest index), normal
+# weekly noise turns into triple-digit "growth" that's really just a tiny
+# absolute move -- e.g. mean 2 -> mean 30 reports as +1400%. Below this
+# baseline, don't trust the percentage at all.
+MIN_BASELINE_INTEREST = 3.0
+
 
 @dataclass
 class TrendResult:
@@ -48,6 +55,18 @@ def _verdict_for(change_pct: float) -> str:
     return "FLAT"
 
 
+def _split_means(values: list[float]) -> tuple[float, float]:
+    """Mean of the first half of the window vs. the second half."""
+    n = len(values)
+    if n < 4:
+        return 0.0, 0.0
+    mid = n // 2
+    first, second = values[:mid], values[mid:]
+    first_mean = float(np.mean(first)) if first else 0.0
+    second_mean = float(np.mean(second)) if second else 0.0
+    return first_mean, second_mean
+
+
 def _slope_change_pct(values: list[float]) -> float:
     """
     Compare the mean of the second half of the window to the mean of the
@@ -55,13 +74,7 @@ def _slope_change_pct(values: list[float]) -> float:
     (more forgiving than a raw linear-regression slope on Trends' 0-100
     index, which spikes on single events).
     """
-    n = len(values)
-    if n < 4:
-        return 0.0
-    mid = n // 2
-    first, second = values[:mid], values[mid:]
-    first_mean = float(np.mean(first)) if first else 0.0
-    second_mean = float(np.mean(second)) if second else 0.0
+    first_mean, second_mean = _split_means(values)
     if first_mean == 0:
         return 100.0 if second_mean > 0 else 0.0
     return ((second_mean - first_mean) / first_mean) * 100.0
@@ -97,6 +110,15 @@ def check_idea(
             coverage = sum(1 for v in series if v > 0) / len(series)
             if coverage < MIN_COVERAGE:
                 return TrendResult(keyword=keyword, ok=False, error="insufficient search volume")
+
+        # Guard against a near-zero baseline: a series can pass the coverage
+        # check above (mostly nonzero) while still starting from a mean of
+        # 1-2, in which case any normal recent uptick reports as a wildly
+        # inflated percentage (see MIN_BASELINE_INTEREST). Don't trust the
+        # ratio in that case either.
+        first_mean, _ = _split_means(series)
+        if first_mean < MIN_BASELINE_INTEREST:
+            return TrendResult(keyword=keyword, ok=False, error="insufficient search volume")
 
         current = float(np.mean(series[-4:])) if len(series) >= 4 else series[-1]
         change_pct = _slope_change_pct(series)

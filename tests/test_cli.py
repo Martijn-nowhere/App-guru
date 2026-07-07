@@ -276,8 +276,8 @@ def test_explore_ranks_rising_first_and_reports_trend(capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert out.index("co-parenting") < out.index("blended families")
-    assert "UP (+13.0%)" in out
-    assert "FLAT (+1.0%)" in out
+    assert "UP (+13.0%, interest 30.0/100)" in out
+    assert "FLAT (+1.0%, interest 10.0/100)" in out
     assert "cleared the trend gate" in out
 
 
