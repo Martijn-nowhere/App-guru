@@ -37,6 +37,17 @@ PAIN_POINT_SCHEMA = {
                         "type": "string",
                         "description": "short label for the theme, e.g. 'onboarding friction'",
                     },
+                    "search_term": {
+                        "type": "string",
+                        "description": (
+                            "a SHORT, real phrase an actual person would type into Google when "
+                            "looking for an app in this space -- 2-4 words, the kind of query that "
+                            "has real search volume. Think product category, not the specific "
+                            "complaint. e.g. for a co-parent messaging gripe: 'co parenting app', "
+                            "not 'unreliable notifications'. This is what gets trend-checked, so it "
+                            "MUST be something people genuinely search, not a description of the bug."
+                        ),
+                    },
                     "pain_point": {
                         "type": "string",
                         "description": "one to two sentence description of the problem",
@@ -75,6 +86,7 @@ PAIN_POINT_SCHEMA = {
                 },
                 "required": [
                     "category",
+                    "search_term",
                     "pain_point",
                     "quotes",
                     "simplest_fix",
@@ -92,7 +104,10 @@ PAIN_POINT_SCHEMA = {
 SYSTEM_PROMPT = (
     "You extract customer pain points from raw forum/review text for app idea "
     "research, and score them as potential app ideas. For each distinct "
-    "problem people describe, produce: a category label; a one-to-two "
+    "problem people describe, produce: a category label; a real-world "
+    "search_term (a short phrase people actually Google when looking for an "
+    "app in this space -- the product category, NOT the specific complaint, "
+    "so it has real search volume); a one-to-two "
     "sentence description; the verbatim quotes that support it; the "
     "simplest possible single-feature fix (one sentence, no 'and' -- if you "
     "can't state it without one, say the pain point is too broad instead of "
@@ -119,6 +134,7 @@ class PainPoint:
     simplest_fix: str = ""
     opportunity_score: int = 0
     buildability_score: int = 0
+    search_term: str = ""
 
 
 def join_threads(thread_texts: list[str]) -> str:
@@ -157,6 +173,7 @@ def extract_pain_points(
             simplest_fix=p["simplest_fix"],
             opportunity_score=p["opportunity_score"],
             buildability_score=p["buildability_score"],
+            search_term=p["search_term"],
         )
         for p in data["pain_points"]
     ]

@@ -64,6 +64,23 @@ def test_check_idea_rising_with_related_queries():
     assert result.current_interest == pytest.approx(sum(series[-4:]) / 4, abs=0.1)
 
 
+def test_check_idea_flags_sparse_series_as_insufficient():
+    # Mostly zeros with a couple of recent blips -- the old code turned this
+    # into a bogus +100% RISING. It must now be reported as insufficient data.
+    series = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 4]
+    result = check_idea("unreliable notifications", FakePytrends(series))
+    assert not result.ok
+    assert result.error == "insufficient search volume"
+
+
+def test_check_idea_keeps_late_riser_with_enough_coverage():
+    # Real term with data across most of the window still scores normally.
+    series = [8, 9, 7, 10, 8, 9, 20, 22, 21, 24, 23, 25]
+    result = check_idea("co parenting app", FakePytrends(series))
+    assert result.ok
+    assert result.verdict == "RISING"
+
+
 def test_check_idea_handles_empty_dataframe():
     class EmptyPytrends:
         def build_payload(self, *a, **k):

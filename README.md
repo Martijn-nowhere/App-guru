@@ -177,13 +177,13 @@ Extracting scored app suggestions with claude-opus-4-8...
     ex for the kids' sake, even when the ex is abusive or unreasonable.
       "it's hard to co-parent with your abuser"
       "why does everyone act like we HAVE to be friends now"
-    Trend: UP (+14.0%)
+    Trend for "co parenting app": UP (+14.0%)
 
 #2  [scheduling conflicts]  Opportunity 6/10 * Buildability 7/10
     App idea: A shared calendar with one-tap swap requests and a confirmation log.
     Pain: Parents argue over swap requests via text, nothing tracked.
       "we always fight about who has them on holidays"
-    Trend: FLAT (+1.0%)
+    Trend for "custody calendar app": FLAT (+1.0%)
 
 -> 1 suggestion(s) also cleared the trend gate. Those are the strongest bets.
 Reminder: opportunity/buildability are the model's read of the evidence, not
@@ -207,6 +207,12 @@ counts as validated.
 - **Buildability score** (1-10) reflects how simple the suggested fix is:
   10 = a trivial single-feature app, buildable with no-code AI tools in
   hours; 1 = needs a complex multi-part product or regulatory hurdles.
+- `--check-trends` trend-checks each idea's **`search_term`** (a short,
+  real phrase people actually Google, e.g. "co parenting app"), not the
+  category label (e.g. "unreliable notifications") — nobody searches the
+  category label, so checking it produced meaningless verdicts. If a term
+  has too little search volume for Trends to say anything real, `mine`
+  reports `N/A (insufficient search volume)` instead of guessing.
 - Read each thread before trusting the extraction — the LLM step merges
   duplicate complaints and only reports pain points with a supporting
   quote, but it can't tell you whether a thread is representative or a

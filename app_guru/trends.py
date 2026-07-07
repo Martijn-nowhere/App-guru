@@ -20,6 +20,14 @@ from pytrends.request import TrendReq
 RISING_THRESHOLD = 8.0   # % growth (recent vs. older half of window) to call it RISING
 DECLINING_THRESHOLD = -8.0  # % growth below this is DECLINING
 
+# A keyword needs data in at least this fraction of the window's weeks for the
+# % change to mean anything. Below it, the series is mostly zeros (Google has
+# too little search volume to report), so a stray blip in the recent half
+# reads as a bogus +100% -- we call that "insufficient data" instead of a
+# trend. Google normalizes each query to its OWN peak, so a real term still
+# fills most of the window; only genuine noise stays this sparse.
+MIN_COVERAGE = 0.5
+
 
 @dataclass
 class TrendResult:
@@ -74,6 +82,15 @@ def check_idea(
             return TrendResult(keyword=keyword, ok=False, error="no data returned")
 
         series = df[keyword].astype(float).tolist()
+
+        # Guard against near-empty series: if Google reports data for less
+        # than MIN_COVERAGE of the weeks, the term has too little search
+        # volume to trust -- don't manufacture a verdict from noise.
+        if series:
+            coverage = sum(1 for v in series if v > 0) / len(series)
+            if coverage < MIN_COVERAGE:
+                return TrendResult(keyword=keyword, ok=False, error="insufficient search volume")
+
         current = float(np.mean(series[-4:])) if len(series) >= 4 else series[-1]
         change_pct = _slope_change_pct(series)
 

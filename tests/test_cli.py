@@ -54,6 +54,7 @@ def _fake_mine_dependencies():
     pain_points = [
         PainPoint(
             category="hostile co-parent communication",
+            search_term="co parenting app",
             description="Parents feel pressure to stay friendly with an abusive ex.",
             quotes=["it's hard to co-parent with your abuser"],
             simplest_fix="A one-tap button that generates a neutral, drama-free message.",
@@ -62,6 +63,7 @@ def _fake_mine_dependencies():
         ),
         PainPoint(
             category="scheduling conflicts",
+            search_term="custody calendar app",
             description="Parents argue over swap requests via text.",
             quotes=["we always fight about who has them on holidays"],
             simplest_fix="A shared calendar with one-tap swap requests.",
@@ -170,8 +172,8 @@ def test_mine_logs_pain_points_with_null_verdict(no_real_ledger):
 def test_mine_subcommand_with_check_trends(capsys):
     research, pain_points = _fake_mine_dependencies()
     trend_results = [
-        TrendResult(keyword="hostile co-parent communication", ok=True, current_interest=20.0, change_pct=14.0, verdict="RISING"),
-        TrendResult(keyword="scheduling conflicts", ok=True, current_interest=10.0, change_pct=1.0, verdict="FLAT"),
+        TrendResult(keyword="co parenting app", ok=True, current_interest=20.0, change_pct=14.0, verdict="RISING"),
+        TrendResult(keyword="custody calendar app", ok=True, current_interest=10.0, change_pct=1.0, verdict="FLAT"),
     ]
 
     with patch.object(cli, "research_market", return_value=research), \
@@ -181,20 +183,21 @@ def test_mine_subcommand_with_check_trends(capsys):
 
     assert rc == 0
     mock_check.assert_called_once()
-    called_categories = mock_check.call_args.args[0]
-    assert set(called_categories) == {"hostile co-parent communication", "scheduling conflicts"}
+    # trend-checks the real search terms, not the category labels
+    called_terms = mock_check.call_args.args[0]
+    assert set(called_terms) == {"co parenting app", "custody calendar app"}
 
     out = capsys.readouterr().out
-    assert "Trend: UP (+14.0%)" in out
-    assert "Trend: FLAT (+1.0%)" in out
+    assert 'Trend for "co parenting app": UP (+14.0%)' in out
+    assert 'Trend for "custody calendar app": FLAT (+1.0%)' in out
     assert "cleared the trend gate" in out
 
 
 def test_mine_csv_includes_scores_and_rank(tmp_path):
     research, pain_points = _fake_mine_dependencies()
     trend_results = [
-        TrendResult(keyword="hostile co-parent communication", ok=True, current_interest=20.0, change_pct=14.0, verdict="RISING"),
-        TrendResult(keyword="scheduling conflicts", ok=True, current_interest=10.0, change_pct=1.0, verdict="FLAT"),
+        TrendResult(keyword="co parenting app", ok=True, current_interest=20.0, change_pct=14.0, verdict="RISING"),
+        TrendResult(keyword="custody calendar app", ok=True, current_interest=10.0, change_pct=1.0, verdict="FLAT"),
     ]
     csv_path = tmp_path / "report.csv"
 

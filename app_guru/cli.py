@@ -168,7 +168,7 @@ def rank_pain_points(pain_points: list[PainPoint]) -> list[PainPoint]:
 
 def print_pain_report(
     pain_points: list[PainPoint],
-    trend_by_category: dict[str, TrendResult] | None = None,
+    trend_by_term: dict[str, TrendResult] | None = None,
 ) -> None:
     if not pain_points:
         print("No pain points extracted.")
@@ -185,19 +185,19 @@ def print_pain_report(
             print(f'      "{snippet}"')
         if len(p.quotes) > 3:
             print(f"      ...and {len(p.quotes) - 3} more quote(s)")
-        if trend_by_category is not None:
-            t = trend_by_category.get(p.category)
+        if trend_by_term is not None:
+            t = trend_by_term.get(p.search_term)
             if t is None or not t.ok:
-                print(f"    Trend: N/A ({t.error if t else 'not checked'})")
+                print(f'    Trend for "{p.search_term}": N/A ({t.error if t else "not checked"})')
             else:
                 mark = VERDICT_MARK[t.verdict]
-                print(f"    Trend: {mark} ({t.change_pct:+.1f}%)")
+                print(f'    Trend for "{p.search_term}": {mark} ({t.change_pct:+.1f}%)')
         print()
 
-    if trend_by_category is not None:
+    if trend_by_term is not None:
         rising = [
             p for p in ranked
-            if (t := trend_by_category.get(p.category)) and t.ok and t.verdict == "RISING"
+            if (t := trend_by_term.get(p.search_term)) and t.ok and t.verdict == "RISING"
         ]
         if rising:
             print(f"-> {len(rising)} suggestion(s) also cleared the trend gate. Those are the strongest bets.")
@@ -210,37 +210,37 @@ def print_pain_report(
 def write_pain_csv(
     pain_points: list[PainPoint],
     path: str,
-    trend_by_category: dict[str, TrendResult] | None = None,
+    trend_by_term: dict[str, TrendResult] | None = None,
 ) -> None:
     ranked = rank_pain_points(pain_points)
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         header = [
             "rank", "category", "app_idea", "pain_point", "quotes",
-            "opportunity_score", "buildability_score",
+            "opportunity_score", "buildability_score", "search_term",
         ]
-        if trend_by_category is not None:
+        if trend_by_term is not None:
             header += ["trend_verdict", "trend_change_pct"]
         writer.writerow(header)
         for i, p in enumerate(ranked, start=1):
             row = [
                 i, p.category, p.simplest_fix, p.description, " | ".join(p.quotes),
-                p.opportunity_score, p.buildability_score,
+                p.opportunity_score, p.buildability_score, p.search_term,
             ]
-            if trend_by_category is not None:
-                t = trend_by_category.get(p.category)
-                row += [t.verdict if t and t.ok else "ERROR", t.change_pct if t and t.ok else ""]
+            if trend_by_term is not None:
+                t = trend_by_term.get(p.search_term)
+                row += [t.verdict if t and t.ok else "N/A", t.change_pct if t and t.ok else ""]
             writer.writerow(row)
 
 
 def pain_point_ledger_entries(
     pain_points: list[PainPoint],
     market: str,
-    trend_by_category: dict[str, TrendResult] | None = None,
+    trend_by_term: dict[str, TrendResult] | None = None,
 ) -> list[LedgerEntry]:
     entries = []
     for p in pain_points:
-        t = trend_by_category.get(p.category) if trend_by_category else None
+        t = trend_by_term.get(p.search_term) if trend_by_term else None
         entries.append(
             LedgerEntry(
                 station="mine",
@@ -253,8 +253,9 @@ def pain_point_ledger_entries(
                     "simplest_fix": p.simplest_fix,
                     "opportunity_score": p.opportunity_score,
                     "buildability_score": p.buildability_score,
+                    "search_term": p.search_term,
                     "trend_check": (
-                        {"verdict": t.verdict if t.ok else "ERROR", "change_pct": t.change_pct if t.ok else None}
+                        {"verdict": t.verdict if t.ok else "N/A", "change_pct": t.change_pct if t.ok else None}
                         if t is not None else None
                     ),
                 },
@@ -298,21 +299,24 @@ def cmd_mine(args: argparse.Namespace) -> int:
     print(f"Extracting scored app suggestions with {args.model}...")
     pain_points = extract_pain_points(research.text, model=args.model)
 
-    trend_by_category = None
+    trend_by_term = None
     if args.check_trends and pain_points:
-        categories = [p.category for p in pain_points]
-        print(f"Checking {len(categories)} pain-point categor{'y' if len(categories) == 1 else 'ies'} against Google Trends...")
+        # Trend-check the model's real-world search terms (e.g. "co parenting
+        # app"), not the category labels (e.g. "unreliable notifications")
+        # which nobody Googles. Dedupe so shared terms cost one request.
+        terms = list(dict.fromkeys(p.search_term for p in pain_points if p.search_term))
+        print(f"Checking {len(terms)} search term(s) against Google Trends...")
         trend_results = check_ideas(
-            categories, timeframe=args.trends_timeframe, geo=args.trends_geo, pause_seconds=args.trends_pause
+            terms, timeframe=args.trends_timeframe, geo=args.trends_geo, pause_seconds=args.trends_pause
         )
-        trend_by_category = {r.keyword: r for r in trend_results}
+        trend_by_term = {r.keyword: r for r in trend_results}
 
     print()
-    print_pain_report(pain_points, trend_by_category=trend_by_category)
-    append_to_ledger(pain_point_ledger_entries(pain_points, args.market, trend_by_category))
+    print_pain_report(pain_points, trend_by_term=trend_by_term)
+    append_to_ledger(pain_point_ledger_entries(pain_points, args.market, trend_by_term))
 
     if args.csv:
-        write_pain_csv(pain_points, args.csv, trend_by_category=trend_by_category)
+        write_pain_csv(pain_points, args.csv, trend_by_term=trend_by_term)
         print(f"Full report written to {args.csv}")
 
     return 0
