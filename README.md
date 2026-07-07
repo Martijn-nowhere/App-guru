@@ -117,10 +117,14 @@ coding agent                      67.0     -11.0%  DOWN      -
 Requires two sets of credentials:
 
 1. **Google Programmable Search** (free tier: 100 queries/day) — create a
-   search engine at https://programmablesearchengine.google.com/ configured
-   to search the entire web, plus a Google Cloud API key with the Custom
-   Search API enabled. Set `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_CX`,
-   or pass `--google-api-key` / `--google-cx`.
+   search engine at https://programmablesearchengine.google.com/ with
+   `reddit.com` as the site to search (`mine` only ever searches Reddit, so
+   a Reddit-scoped engine is exactly right — Google has deprecated the old
+   "search the entire web" option, and it isn't needed here). The engine's
+   "Search engine ID" is your `GOOGLE_SEARCH_CX`. Then add a Google Cloud
+   API key with the Custom Search API enabled — that's your
+   `GOOGLE_SEARCH_API_KEY`. Set both as env vars, or pass
+   `--google-api-key` / `--google-cx`.
 2. **`ANTHROPIC_API_KEY`** for the pain-point extraction step (standard
    Anthropic API key; the SDK reads it from the environment automatically).
 

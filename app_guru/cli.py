@@ -268,8 +268,9 @@ def cmd_mine(args: argparse.Namespace) -> int:
         print(
             "error: Google Programmable Search credentials required.\n"
             "  Pass --google-api-key/--google-cx, or set GOOGLE_SEARCH_API_KEY / GOOGLE_SEARCH_CX.\n"
-            "  Set one up at https://programmablesearchengine.google.com/ (search the entire web)\n"
-            "  plus a Cloud API key with the Custom Search API enabled.",
+            "  Create an engine at https://programmablesearchengine.google.com/ with reddit.com\n"
+            "  as the site to search (mine only searches Reddit), then add a Google Cloud API key\n"
+            "  with the Custom Search API enabled.",
             file=sys.stderr,
         )
         return 2
